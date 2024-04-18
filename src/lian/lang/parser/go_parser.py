@@ -149,6 +149,17 @@ class Parser(common_parser.Parser):
 
         return self.global_return()
 
+    def cast_expression(self, node, statements):
+        value = self.find_child_by_field(node, "operand")
+        shadow_value = self.parse(value, statements)
+
+        types = self.find_children_by_field(node, "type")
+        for t in types:
+            statements.append(
+                {"assign_stmt": {"target": shadow_value, "operator": "cast", "operand": self.read_node_text(t)}})
+
+        return shadow_value
+    
     def check_expression_handler(self, node):
         EXPRESSION_HANDLER_MAP = {
             "unary_expression"          : self.unary_expression,
@@ -157,7 +168,7 @@ class Parser(common_parser.Parser):
             "index_expression"          : self.array,
             "slice_expression"          : self.slice_expression,
             "call_expression"           : self.call_expression,
-            "type_assertion_expression"        : self.type_assertion_expression,
+            "type_assertion_expression"        : self.cast_expression,
             "type_conversion_expression"         : self.type_conversion_expression,
             "parenthesized_expression"             : self.parenthesized_expression,
         }
