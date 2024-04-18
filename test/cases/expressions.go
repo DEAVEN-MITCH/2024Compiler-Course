@@ -17,3 +17,10 @@ a[-b]
 
 //slice
 a[b:c:d]
+
+//call
+a(b,c)
+//d[int](e,f)
+
+//type_asserion
+a.(string)
