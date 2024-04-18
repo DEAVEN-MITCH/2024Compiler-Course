@@ -24,3 +24,7 @@ a(b,c)
 
 //type_asserion
 a.(string)
+
+//mix
+-a + b || c <= e + arr[g]
+a*b <= e*f + g.(int) - len(h)
