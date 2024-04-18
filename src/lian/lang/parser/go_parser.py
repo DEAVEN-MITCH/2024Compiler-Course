@@ -14,7 +14,8 @@ class Parser(common_parser.Parser):
         LITERAL_MAP = {
             "composite_literal": self.regular_literal,
             "func_literal": self.regular_literal,
-            "_string_literal": self.string_literal,
+            "raw_string_literal": self.string_literal,
+            "interpreted_string_literal":self.string_literal,
             "int_literal": self.regular_number_literal,
             "float_literal": self.regular_number_literal,
             "image_literal": self.regular_literal,
@@ -24,7 +25,7 @@ class Parser(common_parser.Parser):
             "false": self.regular_literal,
             "itoa": self.regular_literal,
         }
-
+        # print(node.type,self.read_node_text(node))
         return LITERAL_MAP.get(node.type, None)
 
     def regular_literal(self, node, statements, replacement):
@@ -106,14 +107,13 @@ class Parser(common_parser.Parser):
         return str(value)
 
     def string_literal(self, node, statements, replacement):
-        child=node.named_children[0]
-        if child.type == "raw_string":
-            return self.read_node_text(child)[1:-1]#remove the surrounding ``
+        if node.type == "raw_string_literal":
+            return self.read_node_text(node)[1:-1]#remove the surrounding ``
         # else type==interpreted_string_literal
-        ret = self.read_node_text(node)
+        ret = self.read_node_text(node)[1:-1]#remove the surrounding ""
         ret = self.handle_hex_string(ret)
-
-        return self.escape_string(ret)
+        # return ret
+        return self.escape_string(ret)[1:-1]
 
     def handle_hex_string(self, input_string):
         if self.is_hex_string(input_string):
@@ -287,7 +287,7 @@ class Parser(common_parser.Parser):
 
     def expression(self, node, statements):
         handler = self.check_expression_handler(node)
-        print(node.type)
+        # print(node.type)
         return handler(node, statements)
 
     def check_statement_handler(self, node):

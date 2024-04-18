@@ -2,7 +2,7 @@
 
 import os
 
-command = os.path.realpath("/app/experiment_2/src/lian/lang/main.py") + " --lang=go -debug -print_statements " + os.path.realpath("/app/experiment_2/test/cases/func_literal.go")
+command = os.path.realpath("/app/experiment_2/src/lian/lang/main.py") + " --lang=go -debug -print_statements " + os.path.realpath("/app/experiment_2/test/cases/*.go")
 
 print(command)
 
