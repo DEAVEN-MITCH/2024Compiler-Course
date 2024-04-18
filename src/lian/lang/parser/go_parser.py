@@ -12,6 +12,17 @@ class Parser(common_parser.Parser):
 
     def obtain_literal_handler(self, node):
         LITERAL_MAP = {
+            "composite_literal": self.composite_literal,
+            "func_literal": self.func_literal,
+            "_string_literal": self._string_literal,
+            "int_literal": self.int_literal,
+            "float_literal": self.float_literal,
+            "image_literal": self.image_literal,
+            "rune_literal": self.rune_literal,
+            "nil": self.nil,
+            "true": self.true,
+            "false": self.false,
+
         }
 
         return LITERAL_MAP.get(node.type, None)
@@ -114,26 +125,15 @@ class Parser(common_parser.Parser):
 
     def check_expression_handler(self, node):
         EXPRESSION_HANDLER_MAP = {
-            # "assignment_expression"     : self.assignment_expression,
-            "binary_expression"         : self.binary_expression,
-            # "instanceof_expression"     : self.instanceof_expression,
             "unary_expression"          : self.unary_expression,
-            # "ternary_expression"        : self.ternary_expression,
-            # "update_expression"         : self.update_expression,
-            # "cast_expression"           : self.cast_expression,
-            # "lambda_expression"         : self.lambda_expression,
-            # "switch_expression"         : self.switch_expression,
+            "binary_expression"         : self.binary_expression,
             "selector_expression"       : self.field,
             "index_expression"          : self.array,
             "slice_expression"          : self.slice_expression,
-            # "method_invocation"         : self.call_expression,
-            # "array_creation_expression" : self.new_array,
-            # "object_creation_expression": self.new_instance,
-            # "marker_annotation"         : self.annotation,
-            # "annotation"                : self.annotation,
-            # "receiver_parameter"        : self.ignore,
-            # "formal_parameter"          : self.formal_parameter,
-            # "spread_parameter"          : self.arg_list,
+            "call_expression"           : self.call_expression,
+            "type_assertion_expression"        : self.type_assertion_expression,
+            "type_conversion_expression"         : self.type_conversion_expression,
+            "parenthesized_expression"             : self.parenthesized_expression,
         }
 
         return EXPRESSION_HANDLER_MAP.get(node.type, None)
