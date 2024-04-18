@@ -121,7 +121,33 @@ class Parser(common_parser.Parser):
         statements.append({"slice_decl": {"target": shadow_operand, "start": shadow_start, "end": shadow_end, "step": shadow_capacity}})
 
         return tmp_var
+    
+    def call_expression(self, node, statements):
+        name = self.find_child_by_field(node, "function")
+        shadow_name = self.parse(name, statements)
+        # print(f"node: {self.read_node_text(node)}")
+        # print(f"node: {node.sexp()}")
 
+        type_arguments = self.find_child_by_field(node, "type_arguments")
+        type_text = ""
+        if type_arguments:
+            type_text = self.read_node_text(type_arguments)[1:-1]
+        args = self.find_child_by_field(node, "arguments")
+        args_list = []
+
+        if args.named_child_count > 0:
+            for child in args.named_children:
+                if self.is_comment(child):
+                    continue
+
+                shadow_variable = self.parse(child, statements)
+                if shadow_variable:
+                    args_list.append(shadow_variable)
+
+        tmp_return = self.tmp_variable(statements)
+        statements.append({"call_stmt": {"target": tmp_return, "name": shadow_name, "type_parameters": type_text, "args": args_list}})
+
+        return self.global_return()
 
     def check_expression_handler(self, node):
         EXPRESSION_HANDLER_MAP = {
