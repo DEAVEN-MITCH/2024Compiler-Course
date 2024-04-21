@@ -12,20 +12,119 @@ class Parser(common_parser.Parser):
 
     def obtain_literal_handler(self, node):
         LITERAL_MAP = {
-            "composite_literal": self.composite_literal,
-            "func_literal": self.func_literal,
-            "_string_literal": self._string_literal,
-            "int_literal": self.int_literal,
-            "float_literal": self.float_literal,
-            "image_literal": self.image_literal,
-            "rune_literal": self.rune_literal,
-            "nil": self.nil,
-            "true": self.true,
-            "false": self.false,
-
+            "composite_literal": self.regular_literal,
+            "func_literal": self.regular_literal,
+            "raw_string_literal": self.string_literal,
+            "interpreted_string_literal":self.string_literal,
+            "int_literal": self.regular_number_literal,
+            "float_literal": self.regular_number_literal,
+            "image_literal": self.regular_literal,
+            "rune_literal": self.regular_literal,
+            "nil": self.regular_literal,
+            "true": self.regular_literal,
+            "false": self.regular_literal,
+            "itoa": self.regular_literal,
         }
-
+        # print(node.type,self.read_node_text(node))
         return LITERAL_MAP.get(node.type, None)
+
+    def regular_literal(self, node, statements, replacement):
+        return self.read_node_text(node)
+
+    def func_literal(self, node, statements,replacement):
+        """function_declaration: $ => prec.right(1, seq(
+          'func',
+          field('name', $.identifier),
+          field('type_parameters', optional($.type_parameter_list)),
+          field('parameters', $.parameter_list),
+          field('result', optional(choice($.parameter_list, $._simple_type))),
+          field('body', optional($.block)),
+        )),
+                    func_literal: $ => seq(
+              'func',
+              field('parameters', $.parameter_list),
+              field('result', optional(choice($.parameter_list, $._simple_type))),
+              field('body', $.block),
+            ),
+                )),
+        """
+        child = self.find_child_by_field(node, "parameters")
+        type_parameters = self.read_node_text(child)[1:-1]
+
+        child = self.find_child_by_field(node, "type")
+        mytype = self.read_node_text(child)
+        tmp=self.tmp_variable(node)
+        new_body = []
+        child = self.find_child_by_field(node, "body")
+        if child:
+            for stmt in child.named_children:
+                if self.is_comment(stmt):
+                    continue
+
+                self.parse(stmt, new_body)
+        statements.append(
+            {"method_decl": { "data_type": mytype, "name": tmp, "type_parameters": type_parameters,
+                             "parameters": new_parameters,  "body": new_body}})
+        statements.append({"method_decl": {"name": tmp,}})
+        return self.read_node_text(node)
+
+        
+
+        child = self.find_child_by_field(node, "name")
+        name = self.read_node_text(child)
+
+        new_parameters = []
+        init = []
+        child = self.find_child_by_field(node, "parameters")
+        if child and child.named_child_count > 0:
+            # need to deal with parameters
+            for p in child.named_children:
+                if self.is_comment(p):
+                    continue
+
+                self.parse(p, init)
+                if len(init) > 0:
+                    new_parameters.append(init.pop())
+
+        new_body = []
+        child = self.find_child_by_field(node, "body")
+        if child:
+            for stmt in child.named_children:
+                if self.is_comment(stmt):
+                    continue
+
+                self.parse(stmt, new_body)
+
+        statements.append(
+            {"method_decl": {"attr": modifiers, "data_type": mytype, "name": name, "type_parameters": type_parameters,
+                             "parameters": new_parameters, "init": init, "body": new_body}})
+        statements.append({"method_decl": {"name": tmp,}})
+        return self.read_node_text(node)
+
+    def regular_number_literal(self, node, statements, replacement):
+        value = self.read_node_text(node)
+        value = self.common_eval(value)
+        return str(value)
+
+    def string_literal(self, node, statements, replacement):
+        if node.type == "raw_string_literal":
+            return self.read_node_text(node)[1:-1]#remove the surrounding ``
+        # else type==interpreted_string_literal
+        ret = self.read_node_text(node)[1:-1]#remove the surrounding ""
+        ret = self.handle_hex_string(ret)
+        # return ret
+        return self.escape_string(ret)[1:-1]
+
+    def handle_hex_string(self, input_string):
+        if self.is_hex_string(input_string):
+            try:
+                tmp_str = input_string.replace('\\x', "")
+                tmp_str = bytes.fromhex(tmp_str).decode('utf8')
+                return tmp_str
+            except:
+                pass
+
+        return input_string
 
     def is_literal(self, node):
         return self.obtain_literal_handler(node) is not None
@@ -45,7 +144,7 @@ class Parser(common_parser.Parser):
     def declaration(self, node, statements):
         handler = self.check_declaration_handler(node)
         return handler(node, statements)
-    
+
     def unary_expression(self, node, statements):
         operand = self.find_child_by_field(node, "operand")
         shadow_operand = self.parse(operand, statements)
@@ -128,6 +227,7 @@ class Parser(common_parser.Parser):
         # print(f"node: {self.read_node_text(node)}")
         # print(f"node: {node.sexp()}")
 
+    
         type_arguments = self.find_child_by_field(node, "type_arguments")
         type_text = ""
         if type_arguments:
@@ -148,7 +248,14 @@ class Parser(common_parser.Parser):
         statements.append({"call_stmt": {"target": tmp_return, "name": shadow_name, "type_parameters": type_text, "args": args_list}})
 
         return self.global_return()
-
+    
+    def type_conversion_expression(self, node, statements):
+        operand = self.find_child_by_field(node, "operand")#the expression to be converted
+        type = self.find_child_by_field(node, "type")
+        shadow_operand = self.parse(operand, statements)
+        statements.append({"assign_stmt": {"target": shadow_operand, "operand": self.read_node_text(type), "operator": 'cast'}})
+        return shadow_operand
+    
     def cast_expression(self, node, statements):
         value = self.find_child_by_field(node, "operand")
         shadow_value = self.parse(value, statements)
@@ -170,7 +277,7 @@ class Parser(common_parser.Parser):
             "call_expression"           : self.call_expression,
             "type_assertion_expression"        : self.cast_expression,
             "type_conversion_expression"         : self.type_conversion_expression,
-            "parenthesized_expression"             : self.parenthesized_expression,
+            # "parenthesized_expression"             : self.parenthesized_expression,
         }
 
         return EXPRESSION_HANDLER_MAP.get(node.type, None)
@@ -180,6 +287,7 @@ class Parser(common_parser.Parser):
 
     def expression(self, node, statements):
         handler = self.check_expression_handler(node)
+        # print(node.type)
         return handler(node, statements)
 
     def check_statement_handler(self, node):
