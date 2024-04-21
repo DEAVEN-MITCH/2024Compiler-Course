@@ -18,8 +18,8 @@ class Parser(common_parser.Parser):
             "interpreted_string_literal":self.string_literal,
             "int_literal": self.regular_number_literal,
             "float_literal": self.regular_number_literal,
-            "image_literal": self.regular_literal,
-            "rune_literal": self.regular_literal,
+            "imaginary_literal": self.regular_imaginary_literal,
+            "rune_literal": self.regular_rune_literal,
             "nil": self.regular_literal,
             "true": self.regular_literal,
             "false": self.regular_literal,
@@ -27,6 +27,16 @@ class Parser(common_parser.Parser):
         }
         # print(node.type,self.read_node_text(node))
         return LITERAL_MAP.get(node.type, None)
+
+    def regular_imaginary_literal(self, node):
+        """处理虚数字面量"""
+        imaginary_value = self.read_node_text(node)  # 获取虚数字面量
+        return f"Imaginary literal: {imaginary_value}"
+
+    def regular_rune_literal(self, node):
+        """处理 rune 字面量"""
+        character = chr(node.value)  # 转换为字符
+        return f"Rune literal: '{character}' (Unicode: {node.value})"
 
     def regular_literal(self, node, statements, replacement):
         return self.read_node_text(node)
@@ -279,10 +289,17 @@ class Parser(common_parser.Parser):
             "call_expression"           : self.call_expression,
             "type_assertion_expression"        : self.cast_expression,
             "type_conversion_expression"         : self.type_conversion_expression,
-            # "parenthesized_expression"             : self.parenthesized_expression,
+            "parenthesized_expression"             : self.parenthesized_expression,
         }
 
         return EXPRESSION_HANDLER_MAP.get(node.type, None)
+
+    def parenthesized_expression(self, node):
+        """处理圆括号表达式"""
+        # 假设 'node.expression' 是括号内的表达式
+        inner_expression = node.expression
+        # 递归解析内部表达式
+        return self.parse_expression(inner_expression)  # 根据内部表达式类型进行处理
 
     def is_expression(self, node):
         return self.check_expression_handler(node) is not None
