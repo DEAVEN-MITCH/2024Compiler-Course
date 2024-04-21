@@ -13,7 +13,7 @@ class Parser(common_parser.Parser):
     def obtain_literal_handler(self, node):
         LITERAL_MAP = {
             "composite_literal": self.regular_literal,
-            "func_literal": self.regular_literal,
+            "func_literal": self.func_literal,
             "raw_string_literal": self.string_literal,
             "interpreted_string_literal":self.string_literal,
             "int_literal": self.regular_number_literal,
@@ -32,88 +32,91 @@ class Parser(common_parser.Parser):
         return self.read_node_text(node)
 
     def func_literal(self, node, statements,replacement):
-        """function_declaration: $ => prec.right(1, seq(
-          'func',
-          field('name', $.identifier),
-          field('type_parameters', optional($.type_parameter_list)),
-          field('parameters', $.parameter_list),
-          field('result', optional(choice($.parameter_list, $._simple_type))),
-          field('body', optional($.block)),
-        )),
-                    func_literal: $ => seq(
-              'func',
-              field('parameters', $.parameter_list),
-              field('result', optional(choice($.parameter_list, $._simple_type))),
-              field('body', $.block),
-            ),
-                )),
-        """
+        #parameters_list是泛型参数列表，parameters是参数列表，匿名函数没有泛型？
+        #parameters processing
         child = self.find_child_by_field(node, "parameters")
-        type_parameters = self.read_node_text(child)[1:-1]
-
-        child = self.find_child_by_field(node, "type")
-        mytype = self.read_node_text(child)
-        tmp=self.tmp_variable(node)
-        new_body = []
-        child = self.find_child_by_field(node, "body")
-        if child:
-            for stmt in child.named_children:
-                if self.is_comment(stmt):
-                    continue
-
-                self.parse(stmt, new_body)
-        statements.append(
-            {"method_decl": { "data_type": mytype, "name": tmp, "type_parameters": type_parameters,
-                             "parameters": new_parameters,  "body": new_body}})
-        statements.append({"method_decl": {"name": tmp,}})
-        return self.read_node_text(node)
-
-        
-
-        child = self.find_child_by_field(node, "name")
-        name = self.read_node_text(child)
-
-        new_parameters = []
+        parameters =[]
         init = []
-        child = self.find_child_by_field(node, "parameters")
+        # tn=child
+        # print(child.type)
+        # while child and child.named_child_count > 0:
+        #     child=child.named_children[0]
+        #     print(child.type)
+
+        #outcome
+        #parameter_list
+        # parameter_declaration
+        # identifier
         if child and child.named_child_count > 0:
             # need to deal with parameters
-            for p in child.named_children:
-                if self.is_comment(p):
-                    continue
+            for p in child.named_children:#parameter_declaration或variadic_parameter_declaration
+                self.parse_parameters(p,init)
+                while len(init) > 0:
+                    parameters.append(init.pop())
+        #return type processing
+        child = self.find_child_by_field(node, "result")
+        mytype = self.read_node_text(child)
+        #new variable for ret
+        tmp=self.tmp_method()
 
-                self.parse(p, init)
-                if len(init) > 0:
-                    new_parameters.append(init.pop())
-
+        type_parameters = []
+        attr=[]
+        #body stmt processing
         new_body = []
         child = self.find_child_by_field(node, "body")
         if child:
             for stmt in child.named_children:
-                if self.is_comment(stmt):
-                    continue
-
                 self.parse(stmt, new_body)
-
         statements.append(
-            {"method_decl": {"attr": modifiers, "data_type": mytype, "name": name, "type_parameters": type_parameters,
-                             "parameters": new_parameters, "init": init, "body": new_body}})
-        statements.append({"method_decl": {"name": tmp,}})
-        return self.read_node_text(node)
+            {"method_decl": { "attr":attr,"data_type": mytype, "name": tmp, "parameters": parameters,"body": new_body,"init": init,"type_parameters": type_parameters,}})
+    
+        return tmp
 
+    def parse_parameters(self,node,statements):
+        modifiers = []
+        mytype = self.find_child_by_field(node, "type")
+        shadow_type = self.read_node_text(mytype)
+        name = self.find_child_by_field(node, "name")
+        shadow_name=self.read_node_text(name)   
+        if node.type=='variadic_parameter_declaration':
+            modifiers.append('variadic')
+            statements.append({"parameter_decl": {"name": shadow_name, "data_type": shadow_type, "modifiers": modifiers}})
+        else :
+            children=node.children_by_field_name('name')
+            for child in children:#all the parameter decl of the same type processing
+                    shadow_name=self.read_node_text(child)
+                    statements.append({"parameter_decl": {"name": shadow_name, "data_type": shadow_type, "modifiers": modifiers}})
+           
+
+        
     def regular_number_literal(self, node, statements, replacement):
         value = self.read_node_text(node)
-        value = self.common_eval(value)
+        if node.type=='float_literal':
+            try:
+                value = float.fromhex(value)
+            except:
+                value = self.common_eval(value)
+        else:
+            value = self.common_eval(value)
+        # tn=node
+        # print(node.type)
+        # while len(tn.named_children)>0:
+        #     tn=tn.named_children[0]
+        #     print(tn.type)
+            
         return str(value)
 
     def string_literal(self, node, statements, replacement):
+        ret=''
         if node.type == "raw_string_literal":
-            return self.read_node_text(node)[1:-1]#remove the surrounding ``
+            ret ='"'+self.read_node_text(node)[1:-1]+'"'#remove the surrounding ``
+            return ret#no need for escape processing for it's raw
         # else type==interpreted_string_literal
-        ret = self.read_node_text(node)[1:-1]#remove the surrounding ""
+        else:
+            ret = self.read_node_text(node)#[1:-1]#remove the surrounding ""
         ret = self.handle_hex_string(ret)
         # return ret
-        return self.escape_string(ret)[1:-1]
+        return self.escape_string(ret)
 
     def handle_hex_string(self, input_string):
         if self.is_hex_string(input_string):

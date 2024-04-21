@@ -1,3 +1,3 @@
 "asdasda"-1
-`sdfsdfsdf`+0
+`sdfsdfsdf`+`\n\asdfasdfb\'`
 "sadf\n\t\a"+"sbxcv\u3255"
