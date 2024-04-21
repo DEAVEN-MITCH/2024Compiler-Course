@@ -217,8 +217,7 @@ class Parser(common_parser.Parser):
         shadow_end = self.parse(end, statements) if end else None
         shadow_capacity = self.parse(capacity, statements) if capacity else None
         tmp_var = self.tmp_variable(statements)
-        statements.append({"slice_decl": {"target": shadow_operand, "start": shadow_start, "end": shadow_end, "step": shadow_capacity}})
-
+        statements.append({"slice_stmt": {"target":tmp_var,"array": shadow_operand, "start": shadow_start, "end": shadow_end, "step": shadow_capacity}})
         return tmp_var
     
     def call_expression(self, node, statements):
