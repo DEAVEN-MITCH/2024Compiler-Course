@@ -1,13 +1,9 @@
-const (
-    first = iota  // 0
-    second        // 1
-    third         // 2
-)
+#!/usr/bin/env python3
 
-var r rune = 'a'
+import os
 
-var ptr *int = nil
+command = os.path.realpath("/app/experiment_2/src/lian/lang/main.py") + " --lang=java -debug -print_statements " + os.path.realpath("/app/experiment_2/test/cases/ima_rune_nil_true_false_iota.go")
 
-var flag bool = true
+print(command)
 
-var x complex64 = 1 + 2i
+os.system(command)
