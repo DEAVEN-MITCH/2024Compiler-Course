@@ -446,6 +446,139 @@ class Parser(common_parser.Parser):
         handler = self.check_expression_handler(node)
         return handler(node, statements)
 
+    def go_statement(self, node, statements):
+        #print(f"node: {self.read_node_text(node)}")
+        #print(f"node: {node.sexp()}")
+        expr = self.find_child_by_type(node, "call_expression")
+        tmp_return=""
+        shadow_name=""
+        type_text=""
+        args_list=[]
+        if expr:
+            #print(f"node: {self.read_node_text(expr)}")
+            #print(f"node: {expr.sexp()}")
+            name = self.find_child_by_field(expr, "function")
+            shadow_name = self.parse(name, statements)  
+            type_arguments = self.find_child_by_field(expr, "type_arguments")
+            if type_arguments:
+                type_text = self.read_node_text(type_arguments)[1:-1]
+            args = self.find_child_by_field(expr, "arguments")
+
+            if args.named_child_count > 0:
+                for child in args.named_children:
+                    if self.is_comment(child):
+                        continue
+
+                    shadow_variable = self.parse(child, statements)
+                    if shadow_variable:
+                        args_list.append(shadow_variable)
+
+            tmp_return = self.tmp_variable(statements)
+        statements.append({"call_stmt": {"attr":"go", "target": tmp_return, "name": shadow_name, "type_parameters": type_text, "args": args_list}})
+
+    def defer_statement(self, node, statements):
+        expr = self.find_child_by_type(node, "call_expression")
+        tmp_return=""
+        shadow_name=""
+        type_text=""
+        args_list=[]
+        if expr:
+            name = self.find_child_by_field(expr, "function")
+            shadow_name = self.parse(name, statements)  
+            type_arguments = self.find_child_by_field(expr, "type_arguments")
+            if type_arguments:
+                type_text = self.read_node_text(type_arguments)[1:-1]
+            args = self.find_child_by_field(expr, "arguments")
+
+            if args.named_child_count > 0:
+                for child in args.named_children:
+                    if self.is_comment(child):
+                        continue
+
+                    shadow_variable = self.parse(child, statements)
+                    if shadow_variable:
+                        args_list.append(shadow_variable)
+
+            tmp_return = self.tmp_variable(statements)
+        statements.append({"call_stmt": {"attr":"defer", "target": tmp_return, "name": shadow_name, "type_parameters": type_text, "args": args_list}})
+
+
+    def if_statement(self, node, statements):
+        init_part = self.find_child_by_field(node, "condition")
+        if init_part:
+            pass #包含decl，下次再写
+        condition_part = self.find_child_by_field(node, "condition")
+        true_part = self.find_child_by_field(node, "consequence")
+        false_part = self.find_child_by_field(node, "alternative")
+
+        true_body = []
+
+        shadow_condition = self.parse(condition_part, statements)
+        self.parse(true_part, true_body)
+        if false_part:
+            false_body = []
+            self.parse(false_part, false_body)
+            statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body, "else_body": false_body}})
+        else:
+            statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body}})
+
+    # def for_statement(self, node, statements):
+    #     init_children = self.find_children_by_field(node, "init")
+    #     step_children = self.find_children_by_field(node, "update")
+
+    #     condition = self.find_child_by_field(node, "condition")
+
+    #     init_body = []
+    #     condition_init = []
+    #     step_body = []
+
+    #     shadow_condition = self.parse(condition, condition_init)
+    #     for child in init_children:
+    #         self.parse(child, init_body)
+
+    #     for child in step_children:
+    #         self.parse(child, step_body)
+
+    #     for_body = []
+
+    #     block = self.find_child_by_field(node, "body")
+    #     self.parse(block, for_body)
+
+    #     statements.append({"for_stmt":
+    #                            {"init_body": init_body,
+    #                             "condition": shadow_condition,
+    #                             "condition_prebody": condition_init,
+    #                             "update_body": step_body,
+    #                             "body": for_body}})
+    # def for_statement(self, node, statements):
+    #     for_clause = self.find_child_by_type(node, "for_clause")
+    #     range_clause = self.find_child_by_type(node, "range_clause")
+    #     body = self.find_child_by_field(node, "body")
+
+    #     if for_clause:
+    #         initializer = self.find_child_by_field(for_clause, "initializer")
+    #         condition = self.find_child_by_field(for_clause, "condition")
+    #         update = self.find_child_by_field(for_clause, "update")
+
+    #         initializer_text = self.parse(initializer, statements) if initializer else ""
+    #         condition_text = self.parse(condition, statements) if condition else ""
+    #         update_text = self.parse(update, statements) if update else ""
+
+    #         statements.append({"for_stmt": {"initializer": initializer_text, "condition": condition_text, "update": update_text}})
+    #     elif range_clause:
+    #         left = self.find_child_by_field(range_clause, "left")
+    #         right = self.find_child_by_field(range_clause, "right")
+
+    #         left_text = self.parse(left, statements) if left else ""
+    #         right_text = self.parse(right, statements)
+
+    #         statements.append({"range_stmt": {"left": left_text, "right": right_text}})
+
+    #     if body:
+    #         body_statements = []
+    #         self.parse(body, body_statements)
+    #         statements[-1]["body"] = body_statements
+
     def check_statement_handler(self, node):
         STATEMENT_HANDLER_MAP = {
             'expression_statement':self.expression_statement,
@@ -455,6 +588,13 @@ class Parser(common_parser.Parser):
             'assignment_statement':self.assignment_statement,
             'return_statement':self.return_statement,
 
+            "go_statement"          : self.go_statement,
+            "defer_statement"         : self.defer_statement,
+            "if_statement"          : self.if_statement,
+            #"for_statement"          : self.for_statement,
+            #"index_expression"          : self.array,
+            #"index_expression"          : self.array,
+            #"index_expression"          : self.array,
         }
         return STATEMENT_HANDLER_MAP.get(node.type, None)
 
