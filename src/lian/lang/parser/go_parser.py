@@ -226,6 +226,8 @@ class Parser(common_parser.Parser):
                 shadow_type=self.read_node_text(type_node)
             shadow_names=[]
             for identifier in identifiers:
+                if identifier.type !='identifier':
+                    continue
                 shadow_name=self.read_node_text(identifier)
                 shadow_names.append(shadow_name)
                 statements.append({"variable_decl": {"name": shadow_name, "data_type": shadow_type, "attr": attr}})
@@ -233,7 +235,7 @@ class Parser(common_parser.Parser):
                 ret_arr=self.parse(value_nodes[0],statements)
                 i=0
                 for shadow_left in shadow_names:
-                    statements.append({"array_read": {"target": shadow_left, "array": ret_arr, "index": i}})
+                    statements.append({"array_read": {"target": shadow_left, "array": ret_arr, "index": str(i)}})
                     i+=1 
                 continue
             if value_nodes and len(shadow_names)==len(value_nodes):
@@ -243,7 +245,18 @@ class Parser(common_parser.Parser):
 
     
     def type_declaration(self,node,statements):
-        pass
+        return
+        for child in node.named_children:
+            if child.type=='type_spec':
+                type_name=child.child_by_field_name('name')
+                type_parameters=child.child_by_field_name('type_parameters')
+                type_def=child.child_by_field_name('type')
+                shadow_name=self.read_node_text(type_name)
+                shadow_value=self.read_node_text(type_value)
+                statements.append({"class_decl": {"name": shadow_name, "attr": None,"supers":None,"type_parameters":None,"static_init":None,"init":None,"fields":None,"methods":None,"nested":None}})
+            elif child.type=='type_alias':
+                pass
+
 
     def var_declaration(self,node,statements):
         var_specs=self.find_children_by_type(node,'var_spec')
@@ -268,7 +281,7 @@ class Parser(common_parser.Parser):
                 ret_arr=self.parse(value_nodes[0],statements)
                 i=0
                 for shadow_left in shadow_names:
-                    statements.append({"array_read": {"target": shadow_left, "array": ret_arr, "index": i}})
+                    statements.append({"array_read": {"target": shadow_left, "array": ret_arr, "index": str(i)}})
                     i+=1 
                 continue
             if value_nodes and len(shadow_names)==len(value_nodes):
@@ -284,9 +297,11 @@ class Parser(common_parser.Parser):
                 ret_arr=self.parse(right_ex[0],statements)
                 i=0
                 for leftexpr in left_ex:
+                    if leftexpr.type !='identifier':
+                        continue
                     shadow_name=self.parse(leftexpr,statements)
                     statements.append({"variable_decl": {"name": shadow_name, "data_type": None, "attr": attr}})
-                    statements.append({"array_read": {"target": shadow_name, "array": ret_arr, "index": i}})
+                    statements.append({"array_read": {"target": shadow_name, "array": ret_arr, "index": str(i)}})
                     i+=1 
         elif len(left_ex)==len(right_ex):
             for i in range(len(left_ex)):
@@ -763,9 +778,23 @@ class Parser(common_parser.Parser):
             if(len(left_list)!=len(right_list)):
                 return
             for i in range(len(right_list)):
-                target=self.parse(left_list[i],statements)
+                left_exp=left_list[i]
                 val=self.parse(right_list[i],statements)
-                statements.append({"assign_stmt": {"target": target, "operand": val}})
+                if left_exp.type=='index_expression':
+                        array,index=self.parse_array(left_exp,statements)
+                        statements.append({"array_write": {"array": array, "index": index, "source": val}})
+                        continue
+                elif left_exp.type=='selector_expression':
+                        target,field=self.parse_field(left_exp,statements)
+                        statements.append({"field_write": {"receiver_object": target, "field": field, "source": val}})
+                        continue
+                elif self.is_star_expression(left_exp):
+                        addr=self.parse(left_exp.child_by_field_name('operand'),statements)
+                        statements.append({"mem_write": {"address": addr,"source":val}})
+                        continue
+                shadow_left=self.parse(left_exp,statements)
+                statements.append({"assign_stmt": {"target": shadow_left, "operand":
+                                                        val}})
             return
         return
 
@@ -780,7 +809,7 @@ class Parser(common_parser.Parser):
         index=0
         for child in expression_list.named_children:
             child_val=self.parse(child,statements)
-            statements.append({"array_write":{"array":ret_var,"index":index,"source":child_val}})
+            statements.append({"array_write":{"array":ret_var,"index":str(index),"source":child_val}})
             index+=1
         statements.append({"return_stmt": {"target": ret_var}})
         return 
