@@ -537,62 +537,57 @@ class Parser(common_parser.Parser):
         else:
             statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body}})
 
-    # def for_statement(self, node, statements):
-    #     init_children = self.find_children_by_field(node, "init")
-    #     step_children = self.find_children_by_field(node, "update")
+    def for_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        exp = self.find_child_by_type(node, "binary_expression")
+        for_clause = self.find_child_by_type(node, "for_clause")
+        range_clause = self.find_child_by_type(node, "range_clause")
+        body = self.find_child_by_field(node, "body")
+        for_body = []
+        block = self.find_child_by_field(node, "body")
+        self.parse(block, for_body)
+        if for_clause:
+            init = self.find_child_by_field(for_clause, "initializer")
+            condition = self.find_child_by_field(for_clause, "condition")
+            step = self.find_child_by_field(for_clause, "update")
+            init_body = []
+            condition_init = []
+            step_body = []
 
-    #     condition = self.find_child_by_field(node, "condition")
+            shadow_condition = self.parse(condition, condition_init)
+            self.parse(init, init_body)
+            self.parse(step, step_body)
 
-    #     init_body = []
-    #     condition_init = []
-    #     step_body = []
+            statements.append({"for_stmt":
+                                {"init_body": init_body,
+                                "condition": shadow_condition,
+                                "condition_prebody": condition_init,
+                                "update_body": step_body,
+                                "body": for_body}})
+        elif range_clause:
+            left = self.find_child_by_field(range_clause, "left")
+            if left:
+                for child in left.named_children:
+                    child_val=self.parse(child,statements)
+            value = self.find_child_by_field(range_clause, "right")
+            shadow_value = self.parse(value, statements)
 
-    #     shadow_condition = self.parse(condition, condition_init)
-    #     for child in init_children:
-    #         self.parse(child, init_body)
-
-    #     for child in step_children:
-    #         self.parse(child, step_body)
-
-    #     for_body = []
-
-    #     block = self.find_child_by_field(node, "body")
-    #     self.parse(block, for_body)
-
-    #     statements.append({"for_stmt":
-    #                            {"init_body": init_body,
-    #                             "condition": shadow_condition,
-    #                             "condition_prebody": condition_init,
-    #                             "update_body": step_body,
-    #                             "body": for_body}})
-    # def for_statement(self, node, statements):
-    #     for_clause = self.find_child_by_type(node, "for_clause")
-    #     range_clause = self.find_child_by_type(node, "range_clause")
-    #     body = self.find_child_by_field(node, "body")
-
-    #     if for_clause:
-    #         initializer = self.find_child_by_field(for_clause, "initializer")
-    #         condition = self.find_child_by_field(for_clause, "condition")
-    #         update = self.find_child_by_field(for_clause, "update")
-
-    #         initializer_text = self.parse(initializer, statements) if initializer else ""
-    #         condition_text = self.parse(condition, statements) if condition else ""
-    #         update_text = self.parse(update, statements) if update else ""
-
-    #         statements.append({"for_stmt": {"initializer": initializer_text, "condition": condition_text, "update": update_text}})
-    #     elif range_clause:
-    #         left = self.find_child_by_field(range_clause, "left")
-    #         right = self.find_child_by_field(range_clause, "right")
-
-    #         left_text = self.parse(left, statements) if left else ""
-    #         right_text = self.parse(right, statements)
-
-    #         statements.append({"range_stmt": {"left": left_text, "right": right_text}})
-
-    #     if body:
-    #         body_statements = []
-    #         self.parse(body, body_statements)
-    #         statements[-1]["body"] = body_statements
+            statements.append({"forin_stmt":
+                                {"attr": None,
+                                    "data_type": None,
+                                    "name": child_val,
+                                    "target": shadow_value,
+                                    "body": for_body}})
+        elif exp:
+            condition_init = []
+            shadow_condition = self.parse(exp, condition_init)
+            statements.append({"for_stmt":
+                                {
+                                "condition": shadow_condition,
+                                "condition_prebody": condition_init,
+                                "body": for_body}})
+    
 
     def check_statement_handler(self, node):
         STATEMENT_HANDLER_MAP = {
@@ -606,7 +601,7 @@ class Parser(common_parser.Parser):
             "go_statement"          : self.go_statement,
             "defer_statement"         : self.defer_statement,
             "if_statement"          : self.if_statement,
-            #"for_statement"          : self.for_statement,
+            "for_statement"          : self.for_statement,
             #"index_expression"          : self.array,
             #"index_expression"          : self.array,
             #"index_expression"          : self.array,
