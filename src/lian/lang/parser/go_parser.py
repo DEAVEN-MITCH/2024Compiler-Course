@@ -544,8 +544,6 @@ class Parser(common_parser.Parser):
             statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body}})
 
     def for_statement(self, node, statements):
-        print(f"node: {self.read_node_text(node)}")
-        print(f"node: {node.sexp()}")
         exp = self.find_child_by_type(node, "binary_expression")
         for_clause = self.find_child_by_type(node, "for_clause")
         range_clause = self.find_child_by_type(node, "range_clause")
@@ -594,6 +592,117 @@ class Parser(common_parser.Parser):
                                 "condition_prebody": condition_init,
                                 "body": for_body}})
     
+    def expression_switch_statement(self, node, statements):
+        switch_stmt_list = []
+        init = self.find_child_by_field(node, "initializer")
+        condition = self.find_child_by_field(node, "value")
+        shadow_condition2 = self.parse(condition, statements)
+        for child in self.find_children_by_type(node, "expression_case"):
+            label = child.named_children[0]
+            for case_condition in label.named_children:
+                shadow_condition = self.parse(case_condition, statements)
+                if case_condition != label.named_children[-1]:
+                    switch_stmt_list.append({"case_stmt": {"condition": case_condition}})
+                else:
+                    if child.named_child_count > 1:
+                        new_body = []
+                        for stat in child.named_children[1:]:
+                            shadow_return = self.parse(stat, new_body)
+                            # if case_init != []:
+                            #     statements.insert(-1, case_init)
+
+                        switch_stmt_list.append({"case_stmt": {"condition": shadow_condition, "body": new_body}})
+                    else:
+                            # if case_init != []:
+                            #     statements.insert(-1, case_init)
+                        switch_stmt_list.append({"case_stmt": {"condition": shadow_condition}})
+        for child in self.find_children_by_type(node, "default_case"):
+            new_body = []
+            shadow_return = None
+            for child_index in range(child.named_child_count):
+                expression_block = child.named_children[child_index]
+                shadow_return = self.parse(expression_block, new_body)
+
+            switch_stmt_list.append({"default_stmt": {"body": new_body}})
+
+        statements.append({"switch_stmt": {"condition": shadow_condition2, "body": switch_stmt_list}})
+
+    def type_switch_statement(self, node, statements):
+
+        gettype_stmt = []
+        switch_stmt_list = []
+        initializer = self.find_child_by_field(node, "initializer")
+        condition = self.find_child_by_field(node, "value")
+        shadow_condition2 = self.parse(condition, statements)
+        gettype_stmt.append({
+            "gettype_stmt": {
+                "target": shadow_condition2
+            }}
+        )
+        
+        for child in self.find_children_by_type(node, "type_case"):
+            case_type = self.read_node_text(child.named_children[0])
+            case_body = []
+            if child.named_child_count > 1:
+                for statement_node in child.named_children[1:]:
+                    self.parse(statement_node, case_body)
+            switch_stmt_list.append({
+                "case_stmt": {
+                    "condition": case_type,
+                    "body": case_body
+                }
+            })
+
+        for child in self.find_children_by_type(node, "default_case"):
+            default_body = []
+            for statement_node in child.named_children:
+                self.parse(statement_node, default_body)
+            switch_stmt_list.append({
+                "default_stmt": {
+                    "body": default_body
+                }
+            })
+
+        statements.append({
+            "switch_stmt": {
+                "condition_t": gettype_stmt,
+                "body": switch_stmt_list
+            }
+        })
+
+    def select_statement(self,node,statements):
+        switch_stmt_list = []
+        
+        for child in self.find_children_by_type(node, "communication_case"):
+            comm = []
+            self.parse(child.named_children[0],comm)
+            case_body = []
+            if child.named_child_count > 1:
+                for statement_node in child.named_children[1:]:
+                    self.parse(statement_node, case_body)
+            switch_stmt_list.append({
+                "case_stmt": {
+                    "condition": comm,
+                    "body": case_body
+                }
+            })
+
+        for child in self.find_children_by_type(node, "default_case"):
+            default_body = []
+            for statement_node in child.named_children:
+                self.parse(statement_node, default_body)
+            switch_stmt_list.append({
+                "default_stmt": {
+                    "body": default_body
+                }
+            })
+
+        statements.append({
+            "switch_stmt": {
+                "condition": [],
+                "body": switch_stmt_list
+            }
+        })
 
     def check_statement_handler(self, node):
         STATEMENT_HANDLER_MAP = {
@@ -608,9 +717,9 @@ class Parser(common_parser.Parser):
             "defer_statement"         : self.defer_statement,
             "if_statement"          : self.if_statement,
             "for_statement"          : self.for_statement,
-            #"index_expression"          : self.array,
-            #"index_expression"          : self.array,
-            #"index_expression"          : self.array,
+            "expression_switch_statement"          : self.expression_switch_statement,
+            "type_switch_statement"          : self.type_switch_statement,
+            "select_statement"          : self.select_statement,
             #"empty_labeled_statement"    :self.empty_labeled_statement,
             "labeled_statement"          :self.label_statement,
             "fallthrough_statement"      :self.fallthrough_statement,
