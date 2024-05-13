@@ -630,17 +630,21 @@ class Parser(common_parser.Parser):
         statements.append({"switch_stmt": {"init_body":init_m,"condition": shadow_condition2, "body": switch_stmt_list}})
 
     def type_switch_statement(self, node, statements):
-
+        # print(f"node: {self.read_node_text(node)}")
+        # print(f"node: {node.sexp()}")
         gettype_stmt = []
         switch_stmt_list = []
-        initializer = self.find_child_by_field(node, "initializer")
+        init = self.find_child_by_field(node, "initializer")
+        init_m = []
+        self.parse(init,init_m)
+        expression_list = self.find_child_by_field(node, "alias")
+        ali_m=[]
+        for child in expression_list.named_children:
+            child_val=self.parse(child,ali_m)
+            ali_m.append(f"[{{'assign_stmt': {{'target': '{child_val}'}}}}]")      
         condition = self.find_child_by_field(node, "value")
         shadow_condition2 = self.parse(condition, statements)
-        gettype_stmt.append({
-            "gettype_stmt": {
-                "target": shadow_condition2
-            }}
-        )
+        gettype_stmt.append(f"[{{'gettype_stmt': {{'target': '{shadow_condition2}'}}}}]")
         
         for child in self.find_children_by_type(node, "type_case"):
             case_type = self.read_node_text(child.named_children[0])
@@ -667,7 +671,8 @@ class Parser(common_parser.Parser):
 
         statements.append({
             "switch_stmt": {
-                "condition_t": gettype_stmt,
+                "init_body":ali_m+init_m,
+                "condition": gettype_stmt,
                 "body": switch_stmt_list
             }
         })
