@@ -18,8 +18,8 @@ class Parser(common_parser.Parser):
             "interpreted_string_literal":self.string_literal,
             "int_literal": self.regular_number_literal,
             "float_literal": self.regular_number_literal,
-            # "imaginary_literal": self.regular_imaginary_literal,
-            # "rune_literal": self.regular_rune_literal,
+            "imaginary_literal": self.regular_imaginary_literal,
+            "rune_literal": self.regular_rune_literal,
             "nil": self.regular_literal,
             "true": self.regular_literal,
             "false": self.regular_literal,
@@ -77,15 +77,21 @@ class Parser(common_parser.Parser):
 
 
 
-    def regular_imaginary_literal(self, node):
+    def regular_imaginary_literal(self, node, statements, replacement):
+        #print(f"node: {self.read_node_text(node)}")
+        #print(f"node: {node.sexp()}")
         """处理虚数字面量"""
         imaginary_value = self.read_node_text(node)  # 获取虚数字面量
         return f"Imaginary literal: {imaginary_value}"
 
-    def regular_rune_literal(self, node):
-        """处理 rune 字面量"""
-        character = chr(node.value)  # 转换为字符
-        return f"Rune literal: '{character}' (Unicode: {node.value})"
+
+    def regular_rune_literal(self, node, statements, replacement):
+        #print(f"node: {self.read_node_text(node)}")
+        #print(f"node: {node.sexp()}")
+        """处理rune字面量"""
+        rune_value = self.read_node_text(node)  # 获取rune字面量
+        return f"Rune literal: {rune_value}"
+
 
     def regular_literal(self, node, statements, replacement):
         return self.read_node_text(node)
@@ -441,17 +447,17 @@ class Parser(common_parser.Parser):
             "call_expression"           : self.call_expression,
             "type_assertion_expression"        : self.cast_expression,
             "type_conversion_expression"         : self.type_conversion_expression,
-            # "parenthesized_expression"             : self.parenthesized_expression,
+            "parenthesized_expression"             : self.parenthesized_expression,
         }
 
         return EXPRESSION_HANDLER_MAP.get(node.type, None)
 
-    def parenthesized_expression(self, node):
-        """处理圆括号表达式"""
-        # 假设 'node.expression' 是括号内的表达式
-        inner_expression = node.expression
-        # 递归解析内部表达式
-        return self.parse_expression(inner_expression)  # 根据内部表达式类型进行处理
+    def parenthesized_expression(self, node, statements):
+        #print(f"node: {self.read_node_text(node)}")
+        #print(f"node: {node.sexp()}")
+        """处理括号表达式"""
+        return self.parse(node.named_children[0])  # 解析括号中的表达式
+
 
     def is_expression(self, node):
         # print(node.type)
@@ -605,8 +611,125 @@ class Parser(common_parser.Parser):
             #"index_expression"          : self.array,
             #"index_expression"          : self.array,
             #"index_expression"          : self.array,
+            #"empty_labeled_statement"    :self.empty_labeled_statement,
+            "labeled_statement"          :self.label_statement,
+            "fallthrough_statement"      :self.fallthrough_statement,
+            "break_statement"            :self.break_statement,
+            "continue_statement"         :self.continue_statement,
+            "goto_statement"             :self.goto_statement,
+            "block"                      :self.block_statement,
+            "empty_statement"            :self.empty_statement,
         }
         return STATEMENT_HANDLER_MAP.get(node.type, None)
+    
+    def label_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+
+        # 检查标签语句是否为空
+        if node.named_child_count == 0:
+            # 添加空标签语句到语句列表中
+            self.empty_labeled_statement(node, statements)
+            # statements.append({"empty_label_stmt": {}})
+        else:
+            # 非空标签语句处理逻辑
+            name_node = node.named_children[0]
+            shadow_name = self.parse(name_node, statements)
+            labeled_statement = {"label_stmt": {"name": shadow_name}}
+            # 如果标签语句还有其他子节点（即非空标签语句），继续解析并处理
+            if node.named_child_count > 1:
+                stmt_node = node.named_children[1]
+                self.parse(stmt_node, statements)
+
+            # 添加非空标签语句到语句列表中
+            statements.append(labeled_statement)
+
+    def fallthrough_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+    
+        #  添加 fallthrough 语句
+        statements.append({"fallthrough_stmt": {}})
+
+        # 解析可能存在的其他语句
+        if node.named_child_count > 0:
+            stmt = node.named_children[0]
+            self.parse(stmt, statements)
+    
+    def break_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        shadow_name = ""
+        if node.named_child_count > 0:
+            name = node.named_children[0]
+            shadow_name = self.parse(name, statements)
+
+        statements.append({"break_stmt": {"target": shadow_name}})
+    
+   # def continue_statement(self, node, statements):
+    #    print(f"node: {self.read_node_text(node)}")
+     #   print(f"node: {node.sexp()}")
+      #  shadow_name = ""
+       # if node.named_child_count > 0:
+        #    name = node.named_children[0]
+         #s   shadow_name = self.parse(name, statements)
+
+    def continue_statement(self, node, statements):
+        # 打印节点的文本和结构信息，有助于调试和开发
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+
+        # 初始化标签名为空字符串
+        label_name = ""
+
+        # 检查该节点是否有命名子节点（即标签）
+        if node.named_child_count > 0:
+            # 提取第一个命名子节点，它应该是标签名
+            label_node = node.named_children[0]
+            # 解析标签名
+            label_name = self.parse(label_node, statements)
+
+            # 添加解析出的标签语句到语句列表中
+            statements.append({"type": "continue", "label": label_name})
+        else:
+            # 如果没有标签，则添加一个无标签的continue语句到列表
+            statements.append({"type": "continue", "label": None})
+            statements.append({"continue_stmt": {"target": shadow_name}})
+    
+    def goto_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 获取标签名
+        name = node.named_children[0]
+        shadow_name = self.parse(name, statements)
+
+        # 添加到语句列表
+        statements.append({"goto_stmt": {"label": shadow_name}})
+
+        # 解析可能存在的其他语句
+        if node.named_child_count > 1:
+            stmt = node.named_children[1]
+            self.parse(stmt, statements)
+    
+    def empty_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 添加空语句
+        statements.append({"empty_stmt": {}})
+        
+    def block_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        block_statements = []
+        for child_node in node.named_children:
+            self.parse(child_node, block_statements)
+        # 将 block_statements 添加到 statements 中作为一个语句块
+        statements.append({"block_stmt": block_statements})
+    
+    def empty_labeled_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        statements.append({"empty_labeled_stmt": {}})
 
     def is_statement(self, node):
         # print(node.type)
@@ -647,21 +770,18 @@ class Parser(common_parser.Parser):
             target,field=self.parse_field(expression, statements)
             tmp_var=self.tmp_variable(statements)
             statements.append({"field_read": {"target": tmp_var, "receiver_object": target, "field": field}})
-            statements.append({"assign_stmt": {"target": tmp_var, "operator": '+', "operand": tmp_var,
-                                           "operand2": '1'}})
+            statements.append({"assign_stmt": {"target": tmp_var, "operator": '+', "operand": tmp_var,"operand2": '1'}})
             statements.append({"field_write": {"receiver_object": target, "field": field, "source": tmp_var}})
             return
         elif self.is_star_expression(expression):
             addr=self.parse(expression.child_by_field_name('operand'),statements)
             tmp_var=self.tmp_variable(statements)
             statements.append({"mem_read": {"address": addr,"target":tmp_var}})
-            statements.append({"assign_stmt": {"target": tmp_var, "operator": '+', "operand": tmp_var,
-                                           "operand2": '1'}})
+            statements.append({"assign_stmt": {"target": tmp_var, "operator": '+', "operand": tmp_var,"operand2": '1'}})
             statements.append({"mem_write": {"address": addr,"source":tmp_var}})
             return
         target=self.parse(expression, statements)
-        statements.append({"assign_stmt": {"target": target, "operator": '+', "operand": target,
-                                           "operand2": '1'}})
+        statements.append({"assign_stmt": {"target": target, "operator": '+', "operand": target,"operand2": '1'}})
         return
     def is_star_expression(self,node):
         return node.type=='unary_expression'  and self.read_node_text(node.child_by_field_name('operator'))=='*'
@@ -672,16 +792,14 @@ class Parser(common_parser.Parser):
             array,index=self.parse_array(expression, statements)
             tmp_var=self.tmp_variable(statements)
             statements.append({"array_read": {"target": tmp_var, "array": array, "index": index}})
-            statements.append({"assign_stmt": {"target": tmp_var, "operator": '-', "operand": tmp_var,
-                                           "operand2": '1'}})
+            statements.append({"assign_stmt": {"target": tmp_var, "operator": '-', "operand": tmp_var,"operand2": '1'}})
             statements.append({"array_write": {"array": array, "index": index, "source": tmp_var}})
             return
         elif et=='selector_expression':
             target,field=self.parse_field(expression, statements)
             tmp_var=self.tmp_variable(statements)
             statements.append({"field_read": {"target": tmp_var, "receiver_object": target, "field": field}})
-            statements.append({"assign_stmt": {"target": tmp_var, "operator": '-', "operand": tmp_var,
-                                           "operand2": '1'}})
+            statements.append({"assign_stmt": {"target": tmp_var, "operator": '-', "operand": tmp_var,"operand2": '1'}})
             statements.append({"field_write": {"receiver_object": target, "field": field, "source": tmp_var}})
             return
         elif self.is_star_expression(expression):
@@ -808,4 +926,3 @@ class Parser(common_parser.Parser):
             index+=1
         statements.append({"return_stmt": {"target": ret_var}})
         return 
-            
