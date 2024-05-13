@@ -789,11 +789,57 @@
 2. 郑仁哲部分
     1. 针对break和fallthrough语句，测试用例如下：
     ```go
-    
+      switch i := 2; i {
+    case 2:
+        fmt.Println("Two")
+        fallthrough
+    case 3:
+        fmt.Println("Three")
+        break
+      }
+   for i := 0; i < 10; i++ {
+        if i > 5 {
+            break
+        }
+        fmt.Println(i)
+   }
     ```
     测试结果：
     ```
-    
+   [{'variable_decl': {'name': 'i', 'data_type': None, 'attr': ['var']}},
+   {'assign_stmt': {'target': 'i', 'operand': '2'}},
+   { 'field_read': {'target': '%v0',
+                 'receiver_object': 'fmt',
+                 'field': 'Println'}},
+   {'call_stmt': {'target': '%v1',
+                'name': '%v0',
+                'type_parameters': '',
+                'args': ['"Two"']}},
+   {'fallthrough_stmt': {}},
+   {'field_read': {'target': '%v2',
+                 'receiver_object': 'fmt',
+                 'field': 'Println'}},
+   {'call_stmt': {'target': '%v3',
+                'name': '%v2',
+                'type_parameters': '',
+                'args': ['"Three"']}},
+   {'break_stmt': {'target': ''}},
+   {'variable_decl': {'name': 'i', 'data_type': None, 'attr': ['var']}},
+   {'assign_stmt': {'target': 'i', 'operand': '0'}},
+   {'assign_stmt': {'target': '%v4',
+                  'operator': '<',
+                  'operand': 'i',
+                  'operand2': '10'}},
+   {'assign_stmt': {'target': 'i',
+                  'operator': '+',
+                  'operand': 'i',
+                  'operand2': '1'}},
+   {'block_stmt': [{'assign_stmt': {'target': '%v0',
+                                  'operator': '>',
+                                  'operand': 'i',
+                                  'operand2': '5'}},
+                 {'if_stmt': {'condition': '%v0',
+                              'then_body': [{'block_stmt': [{'break_stmt'
     ```
     2.针对continue/labeled/goto/block/empty的测试样例如下：
     ```go
