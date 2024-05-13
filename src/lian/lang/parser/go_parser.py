@@ -699,7 +699,7 @@ class Parser(common_parser.Parser):
         else:
             # 如果没有标签，则添加一个无标签的continue语句到列表
             statements.append({"type": "continue", "label": None})
-            statements.append({"continue_stmt": {"target": shadow_name}})
+
     
     def goto_statement(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
@@ -719,17 +719,39 @@ class Parser(common_parser.Parser):
     def empty_statement(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
         print(f"node: {node.sexp()}")
-        # 添加空语句
-        statements.append({"empty_stmt": {}})
         
+        return
+        # 添加空语句
+        #statements.append({"empty_stmt": {}})
+        
+    #def block_statement(self, node, statements):
+    #    print(f"node: {self.read_node_text(node)}")
+    #    print(f"node: {node.sexp()}")
+    #    block_statements = []
+    #    for child_node in node.named_children:
+    #        self.parse(child_node, block_statements)
+    #    # 将 block_statements 添加到 statements 中作为一个语句块
+    #    statements.append({"block_stmt": block_statements})
     def block_statement(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
         print(f"node: {node.sexp()}")
+
+        # 初始化块内的语句列表
         block_statements = []
+
+        # 处理 block_start (隐式)
+        block_statements.append({"block_start": {"stmt_id": id(node), "parent_stmt_id": id(node.parent)}})
+
+        # 遍历块内的命名子节点
         for child_node in node.named_children:
+            # 解析每个子节点，并将结果添加到块内的语句列表中
             self.parse(child_node, block_statements)
-        # 将 block_statements 添加到 statements 中作为一个语句块
-        statements.append({"block_stmt": block_statements})
+
+        # 处理 block_end (隐式)
+        block_statements.append({"block_end": {"stmt_id": id(node), "parent_stmt_id": id(node.parent)}})
+
+        # 将完整的块，包括开始和结束，添加到主语句列表
+        statements.append({"block": {"body": block_statements}})
     
     def empty_labeled_statement(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
