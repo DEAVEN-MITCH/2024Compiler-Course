@@ -31,6 +31,16 @@
         $.block,
         $.empty_statement,
     ```
+- 宋岱桉：_statement中以下部分的解析以及对应测试用例、测试程序的编写
+    ```js
+        $.go_statement,
+        $.defer_statement,
+        $.if_statement,
+        $.for_statement,
+        $.expression_switch_statement,
+        $.type_switch_statement,
+        $.select_statement,
+    ```
 ## 实验思路及核心代码
 1. 分工
 2. 有过上次实验的经验，这次解析起来得心应手，有疑点的话就与其他组讨论或咨询助教、老师。
@@ -314,6 +324,62 @@
     
     ```
     8.另外处理空标签情况
+5. 宋岱桉部分
+   1. go_statement从给定节点对象中找到调用表达式，解析调用表达式中的函数名，并将其存储在变量 shadow_name 中。然后解析调用表达式中的类型参数（type_arguments），如果有的话，并将其存储在变量 type_text 中，再解析调用表达式中的参数，并将每个参数的值存储在列表 args_list 中。go存在attr中。
+   ```py
+       def go_statement(self, node, statements):
+        #print(f"node: {self.read_node_text(node)}")
+        #print(f"node: {node.sexp()}")
+        expr = self.find_child_by_type(node, "call_expression")
+        tmp_return=""
+        shadow_name=""
+        type_text=""
+        args_list=[]
+        if expr:
+            name = self.find_child_by_field(expr, "function")
+            shadow_name = self.parse(name, statements)  
+            type_arguments = self.find_child_by_field(expr, "type_arguments")
+            if type_arguments:
+                type_text = self.read_node_text(type_arguments)[1:-1]
+            args = self.find_child_by_field(expr, "arguments")
+
+            if args.named_child_count > 0:
+                for child in args.named_children:
+                    if self.is_comment(child):
+                        continue
+
+                    shadow_variable = self.parse(child, statements)
+                    if shadow_variable:
+                        args_list.append(shadow_variable)
+
+            tmp_return = self.tmp_variable(statements)
+        statements.append({"call_stmt": {"attr":"go", "target": tmp_return, "name": shadow_name, "type_parameters": type_text, "args": args_list}})
+    ```
+    2. 处理 defer 语句,首先从给定的节点对象中查找调用表达式（call_expression）。然后，解析调用表达式中的函数名，并将其存储在变量 shadow_name 中。接着，如果调用表达式中存在类型参数（type_arguments），则将其解析并存储在变量 type_text 中。之后，解析调用表达式中的参数，并将每个参数的值存储在列表 args_list 中。同时，还生成一个临时变量名，用于存储 defer 语句的返回值，并将其存储在变量 tmp_return 中。
+    3. if 语句。首先查找节点对象中的条件部分，然后解析条件部分的内容，并将其存储在变量 shadow_condition 中。然后查找节点对象中的真实部分（即条件成立时执行的部分），并将其解析为一个语句列表 true_body。将另一部分解析为另一个语句列表 false_body。最后，根据条件是否有假设部分，将一个包含 if 语句信息的字典添加到语句列表中。
+    4. for 循环语句。首先查找节点对象中的条件部分，然后根据条件部分的类型分别处理不同的情况。
+       - 如果存在 for_clause，则表示使用的是经典的 for 循环形式。在这种情况下，解析初始化器（initializer）、条件（condition）和更新（update）部分，然后将它们存储在相应的变量中，并解析循环体（body），最后将一个包含 for 循环信息的字典添加到语句列表中。
+       - 如果存在 range_clause，则表示使用的是 range 形式的 for 循环。在这种情况下，解析 range 子句的左值（left）和右值（right），然后将左值解析为循环变量名（name），右值解析为遍历的数据源（target），最后将一个包含 for-in 循环信息的字典添加到语句列表中。
+       - 如果以上两种情况都不存在，则表示使用的是基于表达式的 for 循环形式。在这种情况下，解析条件表达式，并将其存储在变量中，并解析循环体，最后将一个包含 for 循环信息的字典添加到语句列表中。
+    5. 处理表达式 switch 语句。首先查找节点对象中的初始化器（initializer）和条件部分（value），然后解析它们的内容。接着，遍历所有的表达式 case 和默认 case，对每一个 case 进行解析，并将解析结果存储在一个列表中。
+        1. 解析初始化器并将其存储在变量 init_m 中。
+        2. 解析条件部分，并将其存储在变量 shadow_condition2 中。
+        3. 遍历所有的表达式 case：
+            - 对于每个 case，解析其条件部分，并将解析结果存储在变量 shadow_condition 中。
+            - 如果该 case 不是最后一个条件部分，将其条件部分添加到 switch_stmt_list 中作为一个单独的 case。
+            - 如果该 case 后面有语句块，则解析其语句块，并将解析结果存储在变量 new_body 中，然后将条件部分和语句块一起添加到 switch_stmt_list 中。
+        4. 遍历所有的默认 case：
+            - 对于每个默认 case，解析其中的语句块，并将解析结果存储在变量 new_body 中，然后将其添加到 switch_stmt_list 中作为一个默认 case。
+        5. 最后，将一个包含 switch 语句信息的字典添加到语句列表中，该字典包括初始化器、条件部分和所有 case 的信息。
+    6. 处理type_switch 语句的函数。
+        1. 首先查找节点对象中的初始化器（initializer）、条件部分（value）和类型别名（alias），然后解析它们的内容。
+        2. 构建两个列表：gettype_stmt 和 switch_stmt_list。
+           - gettype_stmt 用于存储获取类型的语句
+           - switch_stmt_list 则用于存储类型 case 和默认 case 的信息。
+        3. 对于类型别名部分，遍历所有的别名，将每个别名解析为相应的变量，并将其添加到 ali_m 列表中作为赋值语句。同时，将获取类型的语句添加到 gettype_stmt 列表中。
+        4. 遍历所有的类型 case 和默认 case：对于每个类型 case，解析其类型条件和语句块，并将其添加到 switch_stmt_list 中。对于默认 case，解析其中的语句块，并将其添加到 switch_stmt_list 中。
+        5. 将一个包含 switch 语句信息的字典添加到语句列表中，该字典包括初始化器、获取类型的语句和所有 case 的信息。
+     7. 处理select 语句。遍历节点对象中的所有通信 case 和默认 case，并将它们解析为相应的字典形式，然后将这些字典添加到 switch_stmt_list 中。具体来说：对于每个通信 case，解析通信操作（communication），并将其存储在变量 comm 中。然后解析该 case 的语句块，并将其存储在变量 case_body 中。最后，将包含通信操作和语句块的字典添加到 switch_stmt_list 中。对于默认 case，解析其中的语句块，并将其存储在变量 default_body 中。然后，将包含默认 case 语句块的字典添加到 switch_stmt_list 中。最后，将一个包含 select 语句信息的字典添加到语句列表中，该字典包括空的条件列表和所有 case 的信息。
 ## 测试用例与结果
 1. 张佳和部分
     1. 针对return语句，测试用例为return.go,如下
@@ -1252,3 +1318,190 @@
    {'operation': 'block_end', 'stmt_id': 43, 'parent_stmt_id': 42},
    {'operation': 'label_stmt', 'stmt_id': 49, 'name': None}]
     ```
+3. 宋岱桉部分：
+   1. go:
+   ```go
+        go myFunction(a)
+    ```
+        {'call_stmt': {'attr': 'go',
+                'target': '%v0',
+                'name': 'myFunction',
+                'type_parameters': '',
+                'args': ['a']}}
+   2. defer:
+   ```go
+        defer cleanup()
+    ```
+        {'call_stmt': {'attr': 'defer',
+                'target': '%v1',
+                'name': 'cleanup',
+                'type_parameters': '',
+                'args': []}},
+   3. if:
+   ```go
+        if x > 10 {
+            fmt.Println("x is greater than 10")
+        } else {
+            fmt.Println("x is less than or equal to 10")
+        }
+    ```
+        {'assign_stmt': {'target': '%v2',
+                  'operator': '>',
+                  'operand': 'x',
+                  'operand2': '10'}},
+        {'if_stmt': {'condition': '%v2',
+              'then_body': [{'field_read': {'target': '%v0',
+                                            'receiver_object': 'fmt',
+                                            'field': 'Println'}},
+                            {'call_stmt': {'target': '%v1',
+                                           'name': '%v0',
+                                           'type_parameters': '',
+                                           'args': ['"x is greater than '
+                                                    '10"']}}],
+              'else_body': [{'field_read': {'target': '%v0',
+                                            'receiver_object': 'fmt',
+                                            'field': 'Println'}},
+                            {'call_stmt': {'target': '%v1',
+                                           'name': '%v0',
+                                           'type_parameters': '',
+                                           'args': ['"x is less than or equal '
+                                                    'to 10"']}}]}},
+   4. for:
+   ```go
+        for i := 0; i < 5; i++ { fmt.Println(i) }
+        for i < 5 {
+            fmt.Println(i)
+            i++
+        }
+        for value := range numbers {
+            fmt.Printf(value)
+        }
+    ```
+        {'for_stmt': {'init_body': [{'variable_decl': {'name': 'i',
+                                                'data_type': None,
+                                                'attr': ['var']}},
+                             {'assign_stmt': {'target': 'i', 'operand': '0'}}],
+               'condition': '%v0',
+               'condition_prebody': [{'assign_stmt': {'target': '%v0',
+                                                      'operator': '<',
+                                                      'operand': 'i',
+                                                      'operand2': '5'}}],
+               'update_body': [{'assign_stmt': {'target': 'i',
+                                                'operator': '+',
+                                                'operand': 'i',
+                                                'operand2': '1'}}],
+               'body': [{'field_read': {'target': '%v0',
+                                        'receiver_object': 'fmt',
+                                        'field': 'Println'}},
+                        {'call_stmt': {'target': '%v1',
+                                       'name': '%v0',
+                                       'type_parameters': '',
+                                       'args': ['i']}}]}},
+        {'for_stmt': {'condition': '%v0',
+               'condition_prebody': [{'assign_stmt': {'target': '%v0',
+                                                      'operator': '<',
+                                                      'operand': 'i',
+                                                      'operand2': '5'}}],
+               'body': [{'field_read': {'target': '%v0',
+                                        'receiver_object': 'fmt',
+                                        'field': 'Println'}},
+                        {'call_stmt': {'target': '%v1',
+                                       'name': '%v0',
+                                       'type_parameters': '',
+                                       'args': ['i']}},
+                        {'assign_stmt': {'target': 'i',
+                                         'operator': '+',
+                                         'operand': 'i',
+                                         'operand2': '1'}}]}},
+        {'forin_stmt': {'attr': None,
+                 'data_type': None,
+                 'name': 'value',
+                 'target': 'numbers',
+                 'body': [{'field_read': {'target': '%v0',
+                                          'receiver_object': 'fmt',
+                                          'field': 'Printf'}},
+                          {'call_stmt': {'target': '%v1',
+                                         'name': '%v0',
+                                         'type_parameters': '',
+                                         'args': ['value']}}]}},
+
+
+    5. switch:
+   ```go
+        switch x := 2;x {
+        case 1:
+            a=1
+            break
+        case 2:
+            a=2
+        default:
+            a=3
+            a=4
+        }
+    ```
+        {'switch_stmt': {'init_body': [{'variable_decl': {'name': 'x',
+                                                   'data_type': None,
+                                                   'attr': ['var']}},
+                                {'assign_stmt': {'target': 'x',
+                                                 'operand': '2'}}],
+                  'condition': 'x',
+                  'body': [{'case_stmt': {'condition': '1',
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '1'}}]}},
+                           {'case_stmt': {'condition': '2',
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '2'}}]}},
+                           {'default_stmt': {'body': [{'assign_stmt': {'target': 'a',
+                                                                       'operand': '3'}},
+                                                      {'assign_stmt': {'target': 'a',
+                                                                       'operand': '4'}}]}}]}}
+    6. type_switch
+   ```go
+   switch i:=1;x:=i.(type) {
+    case int:
+        a=1
+    case string:
+        a=2
+    default:
+        a=3
+    }
+    ```
+    [{'switch_stmt': {'init_body': ["[{'assign_stmt': {'target': 'x'}}]",
+                                {'variable_decl': {'name': 'i',
+                                                   'data_type': None,
+                                                   'attr': ['var']}},
+                                {'assign_stmt': {'target': 'i',
+                                                 'operand': '1'}}],
+                  'condition': ["[{'gettype_stmt': {'target': 'i'}}]"],
+                  'body': [{'case_stmt': {'condition': 'int',
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '1'}}]}},
+                           {'case_stmt': {'condition': 'string',
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '2'}}]}},
+                           {'default_stmt': {'body': [{'assign_stmt': {'target': 'a',
+                                                                       'operand': '3'}}]}}]}}]
+    7. select
+   ```go
+   select {
+    case msg1 := <-channel1:
+        a=1
+    case msg2 := <-channel2:
+        a=2
+    default:
+        a=3
+    }
+    ```
+        [{'switch_stmt': {'condition': [],
+                  'body': [{'case_stmt': {'condition': [{'assign_stmt': {'target': '%v0',
+                                                                         'operator': '<-',
+                                                                         'operand': 'channel1'}}],
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '1'}}]}},
+                           {'case_stmt': {'condition': [{'assign_stmt': {'target': '%v0',
+                                                                         'operator': '<-',
+                                                                         'operand': 'channel2'}}],
+                                          'body': [{'assign_stmt': {'target': 'a',
+                                                                    'operand': '2'}}]}},
+                           {'default_stmt': {'body': [{'assign_stmt': {'target': 'a',
+                                                                       'operand': '3'}}]}}]}}]

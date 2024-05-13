@@ -476,8 +476,6 @@ class Parser(common_parser.Parser):
         type_text=""
         args_list=[]
         if expr:
-            #print(f"node: {self.read_node_text(expr)}")
-            #print(f"node: {expr.sexp()}")
             name = self.find_child_by_field(expr, "function")
             shadow_name = self.parse(name, statements)  
             type_arguments = self.find_child_by_field(expr, "type_arguments")
