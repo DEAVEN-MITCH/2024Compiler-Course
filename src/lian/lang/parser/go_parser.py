@@ -547,7 +547,6 @@ class Parser(common_parser.Parser):
         exp = self.find_child_by_type(node, "binary_expression")
         for_clause = self.find_child_by_type(node, "for_clause")
         range_clause = self.find_child_by_type(node, "range_clause")
-        body = self.find_child_by_field(node, "body")
         for_body = []
         block = self.find_child_by_field(node, "body")
         self.parse(block, for_body)
@@ -595,8 +594,11 @@ class Parser(common_parser.Parser):
     def expression_switch_statement(self, node, statements):
         switch_stmt_list = []
         init = self.find_child_by_field(node, "initializer")
+        init_m = []
+        self.parse(init,init_m)
         condition = self.find_child_by_field(node, "value")
         shadow_condition2 = self.parse(condition, statements)
+        cases = []
         for child in self.find_children_by_type(node, "expression_case"):
             label = child.named_children[0]
             for case_condition in label.named_children:
@@ -625,7 +627,7 @@ class Parser(common_parser.Parser):
 
             switch_stmt_list.append({"default_stmt": {"body": new_body}})
 
-        statements.append({"switch_stmt": {"condition": shadow_condition2, "body": switch_stmt_list}})
+        statements.append({"switch_stmt": {"init_body":init_m,"condition": shadow_condition2, "body": switch_stmt_list}})
 
     def type_switch_statement(self, node, statements):
 
