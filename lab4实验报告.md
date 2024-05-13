@@ -21,6 +21,16 @@
         $.short_var_declaration,
     ```
     此外补充了`$.composite_literal`的解析
+- 郑仁哲：_statement中以下部分的解析以及对应测试用例、测试程序的编写
+    ```js
+        $.labeled_statement,
+        $.fallthrough_statement,
+        $.break_statement,
+        $.continue_statement,
+        $.goto_statement,
+        $.block,
+        $.empty_statement,
+    ```
 ## 实验思路及核心代码
 1. 分工
 2. 有过上次实验的经验，这次解析起来得心应手，有疑点的话就与其他组讨论或咨询助教、老师。
@@ -180,7 +190,118 @@
         statements.append({"new_instance":{"target":tmp_var,       "type_parameters":type_parameters,"data_type":shadow_type,"args":args,"init":init,"fields":fields,"methods":methods,"nested":nested}})
         return tmp_var
     ```
+4. 郑仁哲部分
+    1. `label_statement`此方法处理带标签的语句。首先打印节点的文本和结构信息以便于调试。接着，根据是否有子节点来确定处理方式：如果没有子节点，则调用self.empty_labeled_statement方法处理空标签语句；如果有子节点，解析第一个子节点作为标签名，并将结果存储在labeled_statement字典中。如果有更多子节点，表示标签后面跟着具体的语句，继续调用self.parse解析这些语句。最终，将包含标签名的字典加入到statements列表。
+    ```py
+    def label_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
 
+        # 检查标签语句是否为空
+        if node.named_child_count == 0:
+            # 添加空标签语句到语句列表中
+            self.empty_labeled_statement(node, statements)
+            # statements.append({"empty_label_stmt": {}})
+        else:
+            # 非空标签语句处理逻辑
+            name_node = node.named_children[0]
+            shadow_name = self.parse(name_node, statements)
+            labeled_statement = {"label_stmt": {"name": shadow_name}}
+            # 如果标签语句还有其他子节点（即非空标签语句），继续解析并处理
+            if node.named_child_count > 1:
+                stmt_node = node.named_children[1]
+                self.parse(stmt_node, statements)
+
+            # 添加非空标签语句到语句列表中
+            statements.append(labeled_statement)     
+    ```
+    2. `fallthrough_statement`在Go中，fallthrough用于switch语句中，以指示继续执行下一个case的代码。
+    ```py
+    def fallthrough_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+    
+        #  添加 fallthrough 语句
+        statements.append({"fallthrough_stmt": {}})
+
+        # 解析可能存在的其他语句
+        if node.named_child_count > 0:
+            stmt = node.named_children[0]
+            self.parse(stmt, statements)
+    ```
+    3. `break_statement`处理break语句，可能会指定一个跳出的目标标签。如果存在命名子节点，则解析这些子节点以获取目标标签，并将其作为break_stmt的一部分添加到statements。这里需要注意的是shadow_name的定义在所有相关分支中均有效。
+    ```py
+    def break_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        shadow_name = ""
+        if node.named_child_count > 0:
+            name = node.named_children[0]
+            shadow_name = self.parse(name, statements)
+
+        statements.append({"break_stmt": {"target": shadow_name}})
+    ```
+    4. `continue_statement`类似于break语句的处理方式，这里解析continue语句，可能带有一个标签。打印节点信息后，检查是否有子节点。如果有，解析这些节点获取标签名，并添加到statements。
+    ```py
+    def continue_statement(self, node, statements):
+        # 打印节点的文本和结构信息，有助于调试和开发
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+
+        # 初始化标签名为空字符串
+        label_name = ""
+
+        # 检查该节点是否有命名子节点（即标签）
+        if node.named_child_count > 0:
+            # 提取第一个命名子节点，它应该是标签名
+            label_node = node.named_children[0]
+            # 解析标签名
+            label_name = self.parse(label_node, statements)
+
+            # 添加解析出的标签语句到语句列表中
+            statements.append({"type": "continue", "label": label_name})
+        else:
+            # 如果没有标签，则添加一个无标签的continue语句到列表
+            statements.append({"type": "continue", "label": None})
+            statements.append({"continue_stmt": {"target": shadow_name}}) 
+    ```
+    5. `goto_statement`处理goto语句，必须解析后面跟随的标签名。首先打印节点信息，然后解析标签名并添加到statements。如果还有更多子节点，继续解析这些节点。这种方法确保了goto语句后的所有相关逻辑都被正确处理。
+    ```py
+    def goto_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 获取标签名
+        name = node.named_children[0]
+        shadow_name = self.parse(name, statements)
+
+        # 添加到语句列表
+        statements.append({"goto_stmt": {"label": shadow_name}})
+
+        # 解析可能存在的其他语句
+        if node.named_child_count > 1:
+            stmt = node.named_children[1]
+            self.parse(stmt, statements)
+    ```  
+    6. `empty_statement`空语句处理十分直接，只需将一个代表空语句的字典添加到statements。在Go语言中，空语句主要用于占位，不执行任何操作。
+    ```py
+    def empty_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 添加空语句
+        statements.append({"empty_stmt": {}})
+    ```
+    7.`block`处理由花括号定义的代码块。首先打印节点信息，然后遍历所有子节点，解析这些节点并收集结果到一个临时列表block_statements，最后将这个列表作为一个整体添加到statements。这种处理方式支持嵌套的代码块。
+    ```py
+    def block_statement(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        block_statements = []
+        for child_node in node.named_children:
+            self.parse(child_node, block_statements)
+        # 将 block_statements 添加到 statements 中作为一个语句块
+        statements.append({"block_stmt": block_statements})
+    ```
+    8.另外处理空标签情况
 ## 测试用例与结果
 1. 张佳和部分
     1. 针对return语句，测试用例为return.go,如下
@@ -665,3 +786,186 @@
      {'variable_decl': {'name': 'ch3', 'data_type': None, 'attr': ['var']}},
      {'array_read': {'target': 'ch3', 'array': '%v19', 'index': '0'}}]
      ```
+2. 郑仁哲部分
+    1. 针对break和fallthrough语句，测试用例如下：
+    ```go
+    
+    ```
+    测试结果：
+    ```
+    
+    ```
+    2.针对continue/labeled/goto/block/empty的测试样例如下：
+    ```go
+        OuterLoop:
+    for i := 0; i < 5; i++ {
+        for j := 0; j < 5; j++ {
+            if j == 2 {
+                continue OuterLoop 
+            }
+            fmt.Printf("i = %d, j = %d\n", i, j)
+        }
+    }
+
+    
+    {
+        fmt.Println("This is a block statement")
+    }
+
+    
+    ; 
+
+    
+    fmt.Println("Before goto")
+    goto Skip
+    fmt.Println("This will not be executed")
+    Skip:
+    fmt.Println("After goto")
+
+    BlockLabel:
+    {
+        fmt.Println("This is a labeled block")
+        goto BlockLabel 
+    }
+
+    ```
+    测试结果：
+    ```
+    [{'variable_decl': {'name': 'i', 'data_type': None, 'attr': ['var']}},
+    {'assign_stmt': {'target': 'i', 'operand': '0'}},
+    {'assign_stmt': {'target': '%v0',
+                  'operator': '<',
+                  'operand': 'i',
+                  'operand2': '5'}},
+   {'assign_stmt': {'target': 'i',
+                  'operator': '+',
+                  'operand': 'i',
+                  'operand2': '1'}},
+    {'block_stmt': [{'variable_decl': {'name': 'j',
+                                     'data_type': None,
+                                    'attr': ['var']}},
+                 {'assign_stmt': {'target': 'j', 'operand': '0'}},
+                 {'assign_stmt': {'target': '%v0',
+                                  'operator': '<',
+                                  'operand': 'j',
+                                  'operand2': '5'}},
+                 {'assign_stmt': {'target': 'j',
+                                  'operator': '+',
+                                  'operand': 'j',
+                                  'operand2': '1'}},
+                 {'block_stmt': [{'assign_stmt': {'target': '%v0',
+                                                  'operator': '==',
+                                                  'operand': 'j',
+                                                  'operand2': '2'}},
+                                 {'if_stmt': {'condition': '%v0',
+                                              'then_body': [{'block_stmt': [{'type': 'continue',
+                                                                             'label': None}]}]}},
+                                 {'field_read': {'target': '%v1',
+                                                 'receiver_object': 'fmt',
+                                                 'field': 'Printf'}},
+                                 {'call_stmt': {'target': '%v2',
+                                                'name': '%v1',
+                                                'type_parameters': '',
+                                                'args': ['"i = %d, j = %d\\n"',
+                                                         'i', 'j']}}]}]},
+    {'label_stmt': {'name': None}},
+    {'block_stmt': [{'field_read': {'target': '%v0',
+                                 'receiver_object': 'fmt',
+                                 'field': 'Println'}},
+                 {'call_stmt': {'target': '%v1',
+                                'name': '%v0',
+                                'type_parameters': '',
+                                'args': ['"This is a block statement"']}}]},
+    {'empty_stmt': {}},
+    {'field_read': {'target': '%v1',
+                 'receiver_object': 'fmt',
+                 'field': 'Println'}},
+    {'call_stmt': {'target': '%v2',
+                'name': '%v1',
+                'type_parameters': '',
+                'args': ['"Before goto"']}},
+    {'goto_stmt': {'label': None}},
+    {'field_read': {'target': '%v3',
+                 'receiver_object': 'fmt',
+                 'field': 'Println'}},
+    {'call_stmt': {'target': '%v4',
+                'name': '%v3',
+                'type_parameters': '',
+                'args': ['"This will not be executed"']}},
+    {'field_read': {'target': '%v5',
+                 'receiver_object': 'fmt',
+                 'field': 'Println'}},
+    {'call_stmt': {'target': '%v6',
+                'name': '%v5',
+                'type_parameters': '',
+                'args': ['"After goto"']}},
+    {'label_stmt': {'name': None}},
+    {'block_stmt': [{'field_read': {'target': '%v0',
+                                 'receiver_object': 'fmt',
+                                 'field': 'Println'}},
+                 {'call_stmt': {'target': '%v1',
+                                'name': '%v0',
+                                'type_parameters': '',
+                                'args': ['"This is a labeled block"']}},
+                 {'goto_stmt': {'label': None}}]},
+   {'label_stmt': {'name': None}}]
+   [{'operation': 'variable_decl',
+   'stmt_id': 1,
+   'name': 'i',
+   'data_type': None,
+   'attr': "['var']"},
+   {'operation': 'assign_stmt', 'stmt_id': 2, 'target': 'i', 'operand': '0'},
+   {'operation': 'assign_stmt',
+   'stmt_id': 3,
+   'target': '%v0',
+   'operator': '<',
+   'operand': 'i',
+   'operand2': '5'},
+   {'operation': 'assign_stmt',
+   'stmt_id': 4,
+   'target': 'i',
+   'operator': '+',
+   'operand': 'i',
+   'operand2': '1'},
+   {'operation': 'block_stmt', 'stmt_id': 5},
+   {'operation': 'label_stmt', 'stmt_id': 6, 'name': None},
+   {'operation': 'block_stmt', 'stmt_id': 7},
+   {'operation': 'empty_stmt', 'stmt_id': 8},
+   {'operation': 'field_read',
+   'stmt_id': 9,
+   'target': '%v1',
+   'receiver_object': 'fmt',
+   'field': 'Println'},
+   {'operation': 'call_stmt',
+   'stmt_id': 10,
+   'target': '%v2',
+   'name': '%v1',
+   'type_parameters': '',
+   'args': '[\'"Before goto"\']'},
+   {'operation': 'goto_stmt', 'stmt_id': 11, 'label': None},
+   {'operation': 'field_read',
+   'stmt_id': 12,
+   'target': '%v3',
+   'receiver_object': 'fmt',
+    'field': 'Println'},
+   {'operation': 'call_stmt',
+   'stmt_id': 13,
+   'target': '%v4',
+   'name': '%v3',
+   'type_parameters': '',
+   'args': '[\'"This will not be executed"\']'},
+   {'operation': 'field_read',
+   'stmt_id': 14,
+   'target': '%v5',
+   'receiver_object': 'fmt',
+   'field': 'Println'},
+   {'operation': 'call_stmt',
+   'stmt_id': 15,
+   'target': '%v6',
+   'name': '%v5',
+   'type_parameters': '',
+   'args': '[\'"After goto"\']'},
+   {'operation': 'label_stmt', 'stmt_id': 16, 'name': None},
+   {'operation': 'block_stmt', 'stmt_id': 17},
+   {'operation': 'label_stmt', 'stmt_id': 18, 'name': None}]
+    ```
