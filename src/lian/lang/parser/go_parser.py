@@ -207,6 +207,8 @@ class Parser(common_parser.Parser):
             # 'type_declaration':self.type_declaration,
             'var_declaration':self.var_declaration,
             'short_var_declaration':self.short_var_declaration,
+            'method_declaration':self.method_declaration,
+            'import_declaration':self.import_declaration,
 
         }
         return DECLARATION_HANDLER_MAP.get(node.type, None)
@@ -315,7 +317,65 @@ class Parser(common_parser.Parser):
                 statements.append({"variable_decl": {"name": shadow_name, "data_type": None, "attr": attr}})
                 shadow_value=self.parse(right_ex[i],statements)
                 statements.append({"assign_stmt": {"target": shadow_name, "operand": shadow_value}})
+    def method_declaration(self, node, statements):
+        child = self.find_child_by_field(node, "result")
+        mytype = self.read_node_text(child)
 
+        child = self.find_child_by_field(node, "name")
+        name = self.read_node_text(child)
+
+        new_parameters = []
+        init = []
+        child = self.find_child_by_field(node, "receiver")
+        for p in child.named_children:
+            self.parse_parameters(p,new_parameters)
+        child = self.find_child_by_field(node, "parameters")
+        for p in child.named_children:
+            self.parse_parameters(p,new_parameters)
+
+        new_body = []
+        child = self.find_child_by_field(node, "body")
+        if child:
+            for stmt in child.named_children:
+                if self.is_comment(stmt):
+                    continue
+
+                self.parse(stmt, new_body)
+
+        statements.append(
+            {"method_decl": {"attr": "interface_method", "data_type": mytype, "name": name, "parameters" : new_parameters,
+                              "body": new_body}})
+
+    def import_declaration(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        child = self.find_child_by_type(node, "import_spec_list")
+        stmt = self.find_child_by_type(node, "import_spec")
+        if child:
+            for stmt in child.named_children:
+                child2 = self.find_child_by_field(stmt, "name")
+                name = self.read_node_text(child2)
+                child2 = self.find_child_by_field(stmt, "path")
+                path = self.read_node_text(child2)
+                if name:
+                    statements.append(
+                        {"import_as_stmt": {"name": path, 
+                              "alias": name}})
+                else :
+                    statements.append(
+                        {"import_stmt": {"name": path}})
+        else:
+            child2 = self.find_child_by_field(stmt, "name")
+            name = self.read_node_text(child2)
+            child2 = self.find_child_by_field(stmt, "path")
+            path = self.read_node_text(child2)
+            if name:
+                statements.append(
+                    {"import_as_stmt": {"name": path, 
+                              "alias": name}})
+            else :
+                statements.append(
+                        {"import_stmt": {"name": path}})
     def unary_expression(self, node, statements):
         operand = self.find_child_by_field(node, "operand")
         shadow_operand = self.parse(operand, statements)
