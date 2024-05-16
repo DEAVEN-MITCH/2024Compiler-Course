@@ -28,13 +28,50 @@ class Parser(common_parser.Parser):
         # print(node.type,self.read_node_text(node))
         return LITERAL_MAP.get(node.type, None)
 
+    def parse_literal_value(self, node,statements):#accept literal_value as input node
+        literal_elements=self.find_children_by_type(node,'literal_element')
+        keyed_element=self.find_children_by_type(node,'keyed_element')
+        tmp_var=self.tmp_variable(statements)
+        type_parameters=[]
+        args=[]
+        init=[]
+        fields=[]
+        methods=[]
+        nested=[]
+        for child in literal_elements:
+            n=child.named_children[0]#ex or literal
+            v=''
+            if n.type=='literal_value':
+                v=self.parse_literal_value(n,init)
+            else:
+                v=self.parse(n,init)
+            args.append(v)
+        for child in keyed_element:
+            # print('#debug in keyed_element')
+            key=child.named_children[0]#literal_element
+            m=key.named_children[0]
+            t_key=''
+            if m.type=='literal_value':
+                t_key=self.parse_literal_value(m,init)
+            else:
+                t_key=self.parse(m,init)
+            value=child.named_children[1]
+            m=value.named_children[0]
+            t_value=''
+            if m.type=='literal_value':
+                t_value=self.parse_literal_value(m,init)
+            else:
+                t_value=self.parse(m,init)
+            init.append({"field_write": {"receiver_object": self.global_this(), "field": t_key, "source": t_value}})
+        statements.append({"new_instance":{"target":tmp_var,       "type_parameters":type_parameters,"data_type":None,"args":args,"init":init,"fields":fields,"methods":methods,"nested":nested}})
+        return tmp_var
     def composite_literal(self,node,statements,replacement):
         type_node=node.child_by_field_name('type')
         shadow_type=self.read_node_text(type_node)
         nt=type_node.type
         body_node=node.child_by_field_name('body')#literal_value
         literal_elements=self.find_children_by_type(body_node,'literal_element')
-        keyed_elments=self.find_children_by_type(body_node,'keyed_element')
+        keyed_element=self.find_children_by_type(body_node,'keyed_element')
         tmp_var=self.tmp_variable(statements)
         type_parameters=[]
         args=[]
@@ -45,7 +82,7 @@ class Parser(common_parser.Parser):
         if nt=='generic_type':
             bt=type_node.child_by_field_name('type')
             nt=bt.type
-            shadow_type=self.read_node_text(bt)
+            shadow_type=self.type_parser(bt,statements)
             tp=type_node.child_by_field_name('type_arguments').named_children
             for child in tp:
                 if child.type==',':
@@ -53,15 +90,28 @@ class Parser(common_parser.Parser):
                 type_parameters.append(self.read_node_text(child))
         for child in literal_elements:
             n=child.named_children[0]#ex or literal
-            v=self.parse(n,statements)
+            v=''
+            if n.type=='literal_value':
+                v=self.parse_literal_value(n,init)
+            else:
+                v=self.parse(n,init)
             args.append(v)
-        for child in keyed_elments:
+        for child in keyed_element:
+            # print('#debug in c keyed')
             key=child.named_children[0]#literal_element
+            m=key.named_children[0]
+            t_key=''
+            if m.type=='literal_value':
+                t_key=self.parse_literal_value(m,init)
+            else:
+                t_key=self.parse(m,init)
             value=child.named_children[1]
-            keyv=key.named_children[0]#ex or lit
-            valuev=value.named_children[0]
-            t_key=self.parse(keyv,init)
-            t_value=self.parse(valuev,init)
+            m=value.named_children[0]
+            t_value=''
+            if m.type=='literal_value':
+                t_value=self.parse_literal_value(m,init)
+            else:
+                t_value=self.parse(m,init)
             if nt=='struct_type':#init use field_write
                 init.append({"field_write": {"receiver_object": self.global_this(), "field": t_key, "source": t_value}})
             elif nt=='map_type':#init use map_write
@@ -204,7 +254,7 @@ class Parser(common_parser.Parser):
     def check_declaration_handler(self, node):
         DECLARATION_HANDLER_MAP = {
             'const_declaration':self.const_declaration,
-            # 'type_declaration':self.type_declaration,
+            'type_declaration':self.type_declaration,
             'var_declaration':self.var_declaration,
             'short_var_declaration':self.short_var_declaration,
 
@@ -250,18 +300,216 @@ class Parser(common_parser.Parser):
                     statements.append({"assign_stmt": {"target": shadow_names[i], "operand": shadow_value}})
 
     
+    def type_parser(self,node,statements)->str:#非直接声明_type节点的处理
+        while node.type == 'parenthesized_type':
+            node=node.named_children[0]#remove the parentheses
+        tt=node.type
+        if tt=='struct_type':   #anonymous struct
+                shadow_name=self.tmp_variable(statements)
+                nested=[]
+                fields=[]
+                field_declarations=self.find_children_by_type(node.named_children[0],'field_declaration')
+                nested_type=[]
+                for fd in field_declarations:
+                    tag=fd.child_by_field_name('tag')
+                    shadow_tag=None
+                    if tag is not None:
+                        shadow_tag=self.parse(tag,nested)
+                    type_node=fd.child_by_field_name('type')
+                    name_nodes=fd.children_by_field_name('name') 
+                    if len(name_nodes)>0:#  choice 1
+                        shadow_type=self.type_parser(type_node,nested)
+                        for name_node in name_nodes:
+                            t_shadow_name=self.read_node_text(name_node)
+                            fields.append({"variable_decl": {"name": t_shadow_name, "data_type": shadow_type, "attr": [str({'tag':shadow_tag})]}})
+                    else:#choice 2
+                        pre=type_node.prev_sibling
+                        prestr=''
+                        if pre is not None:
+                            prestr=self.read_node_text(pre)#*
+                        shadow_type=prestr+self.type_parser(type_node,nested)
+                        nested_type.append(shadow_type)
+                statements.append({"class_decl": {"name": shadow_name, "attr": [str({'nested_type':nested_type})],"supers":None,"type_parameters":None,"static_init":None,"init":None,"fields":fields,"methods":None,"nested":nested}})
+                return shadow_name
+        elif tt=='interface_type':#anonymous struct
+                methods=[]
+                fields=[]
+                nested=[]
+                nested_type=[]
+                nested_constraints=[]
+                shadow_name=self.tmp_variable(statements)
+                methods_specs=self.find_children_by_type(node,'method_spec')
+                struct_elems=self.find_children_by_type(node,'struct_elem')
+                constraint_elems=self.find_children_by_type(node,'constraint_elem')
+                for child in methods_specs:
+                    parameters=node.child_by_field_name('parameters')
+                    shadow_parameters=[]
+                    for parameter in parameters.named_children:
+                        self.parse_parameters(parameter,shadow_parameters)
+
+                    result=node.child_by_field_name('result')
+                    shadow_result=''
+                    if result is not None:
+                        if result.type=='parameter_list':
+                            shadow_result=self.read_node_text(result)
+                        else:#simple_type
+                            shadow_result=self.type_parser(result,nested)
+                    methods.append({'method_decl':{"name":self.read_node_text(child.child_by_field_name('name')),"parameters":shadow_parameters,"data_type":shadow_result,'attr':[],'init':None,'body':None}})
+                
+                for child in struct_elems:
+                    nested_type.append(self.read_node_text(child))
+                for child in constraint_elems:
+                    nested_constraints.append(self.read_node_text(child))
+                statements.append({"interface_decl": {"name": shadow_name, "attr": [str({'nested_type':nested_type,'nested_constraints':nested_constraints})],"supers":None,"type_parameters":None,"static_init":None,"init":None,"fields":None,"methods":methods,"nested":nested}})
+                return shadow_name
+        elif tt=='pointer_type':
+            return '*'+self.type_parser(node.named_children[0],statements)
+        elif tt=='array_type':
+            length=node.child_by_field_name('length')
+            shadow_length=self.parse(length,statements)
+            element=node.child_by_field_name('element')
+            shadow_element=self.type_parser(element,statements)
+            return '['+str(shadow_length)+']'+shadow_element
+        elif tt=='implicit_length_array_type':
+            element=node.child_by_field_name('element')
+            shadow_element=self.type_parser(element,statements)
+            return '[...]'+shadow_element
+        elif tt=='slice_type':
+            element=node.child_by_field_name('element')
+            shadow_element=self.type_parser(element,statements)
+            return '[]'+shadow_element
+        elif tt=='map_type':
+            key=node.child_by_field_name('key')
+            shadow_key=self.type_parser(key,statements)
+            value=node.child_by_field_name('value')
+            shadow_value=self.type_parser(value,statements)
+            return 'map['+shadow_key+']'+shadow_value
+            
+        elif tt=='channel_type':
+            value=node.child_by_field_name('value')
+            shadow_value=self.type_parser(value,statements)
+            pre=''
+            prenode=value.prev_sibling#DEBUG
+            while prenode is not None:
+                pre=self.read_node_text(prenode)+pre
+                prenode=prenode.prev_sibling
+            return pre+' '+shadow_value
+        elif tt=='function_type':
+            parameters=node.child_by_field_name('parameters')
+            shadow_parameters=self.read_node_text(parameters)
+            result=node.child_by_field_name('result')
+            shadow_result=''
+            if result is not None:
+                if result.type=='parameter_list':
+                    shadow_result=self.read_node_text(result)
+                else:#simple_type
+                    shadow_result=self.type_parser(result,statements)
+            return 'func'+shadow_parameters+shadow_result
+        elif tt=='union_type':  
+            left=node.children[0]
+            right=node.children[2]
+            shadow_left=self.type_parser(left,statements)
+            shadow_right=self.type_parser(right,statements)
+            return shadow_left+'|'+shadow_right
+        elif tt=='negated_type':
+            t=node.named_children[0]
+            shadow_t=self.type_parser(t,statements)
+            return '~'+shadow_t
+        elif tt=='generic_type':
+            type=node.child_by_field_name('type')
+            shadow_type=self.type_parser(type,statements)
+            type_arguments=node.child_by_field_name('type_arguments')
+            shadow_type_arguments=''
+            for child in type_arguments.children:
+                if child.is_named:#DEBUG
+                    shadow_type_arguments+=self.type_parser(child,statements)
+                else:
+                    shadow_type_arguments+=self.read_node_text(child)
+            return shadow_type+shadow_type_arguments
+            
+        else:#_type_identifier或qualified_type
+            return self.read_node_text(node)
+
     def type_declaration(self,node,statements):
-        return
-        for child in node.named_children:
+        for child in node.named_children:#all type_spec or type_alias,deal with them respectively
             if child.type=='type_spec':
                 type_name=child.child_by_field_name('name')
                 type_parameters=child.child_by_field_name('type_parameters')
-                type_def=child.child_by_field_name('type')
+                shadow_type_parameters=[]#泛型参数
                 shadow_name=self.read_node_text(type_name)
-                shadow_value=self.read_node_text(type_value)
-                statements.append({"class_decl": {"name": shadow_name, "attr": None,"supers":None,"type_parameters":None,"static_init":None,"init":None,"fields":None,"methods":None,"nested":None}})
+                if type_parameters:
+                    for tp in type_parameters.named_children:#parameter declaration
+                        shadow_type_parameters.append(self.read_node_text(tp.child_by_field_name('name')))#type identifier's names as parameters
+                
+                type_def=child.child_by_field_name('type')#include struct、interface and so on
+                while type_def.type == 'parenthesized_type':
+                    type_def=type_def.named_children[0]#remove the parentheses
+                
+                type_type=type_def.type
+                if type_type=='struct_type':    
+                    nested=[]
+                    fields=[]
+                    field_declarations=self.find_children_by_type(type_def.named_children[0],'field_declaration')
+                    nested_type=[]
+                    for fd in field_declarations:
+                        tag=fd.child_by_field_name('tag')
+                        shadow_tag=None
+                        if tag is not None:
+                            shadow_tag=self.parse(tag,nested)
+                        type_node=fd.child_by_field_name('type')
+                        name_nodes=fd.children_by_field_name('name') 
+                        if len(name_nodes)>0:#  choice 1
+                            shadow_type=self.type_parser(type_node,nested)
+                            for name_node in name_nodes:
+                                t_shadow_name=self.read_node_text(name_node)
+                                fields.append({"variable_decl": {"name": t_shadow_name, "data_type": shadow_type, "attr": [str({'tag':shadow_tag})]}})
+                        else:#choice 2
+                            pre=type_node.prev_sibling
+                            prestr=''
+                            if pre is not None:
+                                prestr=self.read_node_text(pre)#*
+                            shadow_type=prestr+self.type_parser(type_node,nested)
+                            nested_type.append(shadow_type)
+                    statements.append({"class_decl": {"name": shadow_name, "attr": [str({'nested_type':nested_type})],"supers":None,"type_parameters":shadow_type_parameters,"static_init":None,"init":None,"fields":fields,"methods":None,"nested":nested}})
+                elif type_type=='interface_type':
+                    methods=[]
+                    fields=[]
+                    nested=[]
+                    nested_type=[]
+                    nested_constraints=[]
+                    methods_specs=self.find_children_by_type(type_def,'method_spec')
+                    struct_elems=self.find_children_by_type(type_def,'struct_elem')
+                    constraint_elems=self.find_children_by_type(type_def,'constraint_elem')
+                    for child in methods_specs:
+                        parameters=child.child_by_field_name('parameters')
+                        shadow_parameters=[]
+                        for parameter in parameters.named_children:
+                            self.parse_parameters(parameter,shadow_parameters)
+
+                        result=child.child_by_field_name('result')
+                        shadow_result=''
+                        if result is not None:
+                            if result.type=='parameter_list':
+                                shadow_result=self.read_node_text(result)
+                            else:#simple_type
+                                shadow_result=self.type_parser(result,nested)
+                        methods.append({'method_decl':{"name":self.read_node_text(child.child_by_field_name('name')),"parameters":shadow_parameters,"data_type":shadow_result,'attr':[],'init':None,'body':None}})
+
+                    for child in struct_elems:
+                        nested_type.append(self.read_node_text(child))
+                    for child in constraint_elems:
+                        nested_constraints.append(self.read_node_text(child))
+                    statements.append({"interface_decl": {"name": shadow_name, "attr": [str({'nested_type':nested_type,'nested_constraints':nested_constraints})],"supers":None,"type_parameters":shadow_type_parameters,"static_init":None,"init":None,"fields":None,"methods":methods,"nested":nested}})
+                else:
+                    nested_type=[]
+                    nested=[]
+                    nested_type.append(self.type_parser(type_def,nested))
+                    statements.append({"class_decl": {"name": shadow_name, "attr": [str({'nested_type':nested_type})],"supers":None,"type_parameters":shadow_type_parameters,"static_init":None,"init":None,"fields":None,"methods":None,"nested":nested}})
             elif child.type=='type_alias':
-                pass
+                shadow_name=self.read_node_text(child.child_by_field_name('name'))
+                type_def=child.child_by_field_name('type')
+                shadow_type=self.type_parser(type_def,statements)
+                statements.append({'type_alias_stmt':{'target':shadow_name,'source':shadow_type}})
 
 
     def var_declaration(self,node,statements):
