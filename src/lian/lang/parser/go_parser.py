@@ -267,20 +267,10 @@ class Parser(common_parser.Parser):
     def package_clause(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
         print(f"node: {node.sexp()}")
-        # 获取 package 声明的包名标识符节点
-        package_identifier_node = node.child_by_field_name('name')
-
-        # 确认我们成功地获得了包名标识符节点
-        if package_identifier_node and package_identifier_node.is_named:
-            package_name = package_identifier_node.text  # 使用节点的 text 属性获取包名
-
-            # 将 package 声明添加到语句列表
-            statements.append({"package_stmt": {"name": package_name}})
-            print(f"Package declared: {package_name}")
-        else:
-            print("No valid package identifier found in package clause.")
-    
-    
+        name = self.read_node_text(node.named_children[0])
+        if name:
+            statements.append({"package_stmt": {"name": name}})
+        
     def function_declaration(self, node, statements):
         print(f"node: {self.read_node_text(node)}")
         print(f"node: {node.sexp()}")
