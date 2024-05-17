@@ -7,6 +7,11 @@
         $.if_stmt中init部分关于declaration的补全
     ```
 - 张佳和：type_declaration的编写和测试用例、程序的编写，并修改了composite_literal。编写parser_type函数处理各种类型（匿名结构体、接口等）
+- 郑仁哲：以下部分的解析以及对应测试用例、测试程序的编写
+    ```js
+        $.package_clause
+        $.function_declaration
+    ```
 ## 实验思路及核心代码
 1. 宋岱桉部分：
    1. method_declaration,使用method_decl，将结构体作为对象的第一个参数，并在attr中标记为'interface_method'.
@@ -326,7 +331,87 @@
             init.append({"field_write": {"receiver_object": self.global_this(), "field": t_key, "source": t_value}})
         statements.append({"new_instance":{"target":tmp_var,       "type_parameters":type_parameters,"data_type":None,"args":args,"init":init,"fields":fields,"methods":methods,"nested":nested}})
         return tmp_var
-   ``` 
+   ```
+3. 郑仁哲部分：
+   1. 'package_clause' 函数主要用于解析 Go 语言的 package 声明节点，提取并验证包名，然后将其记录并输出。首先打印节点文本和结构以辅助调试。
+   ```py
+      def package_clause(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        name = self.read_node_text(node.named_children[0])
+        if name:
+            statements.append({"package_stmt": {"name": name}})
+   ```
+   2.'function_declaration'方法，用于解析和处理 Go 语言中的函数声明。此方法首先打印节点的文本内容和结构，以帮助调试。然后，它按顺序提取函数名、类型参数、参数列表、返回类型和函数体：
+   函数名：通过节点的 child_by_field_name('name') 获取，如果未找到则使用默认值 "UnnamedFunction"。
+   类型参数：从 type_parameters 子节点中提取，如果存在。
+   参数列表：通过调用 parameter_declaration 方法逐个解析 parameters 子节点中的每个参数。
+   返回类型：从 result 子节点中提取文本作为返回类型，如果存在。 
+   函数体：解析 body 子节点中的每条语句，使用 parse_statement 方法处理。
+   最后，将所有这些信息聚合成一个字典，并将其添加到 statements 列表中。这个字典包括函数的名称、类型参数、参数列表、返回类型和函数体。函数结束时打印一条消息确认函数已被声明。
+   ```py
+   def function_declaration(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 获取函数名节点
+        name_node = node.child_by_field_name('name')
+        function_name = name_node.text if name_node else "UnnamedFunction"
+
+        # 获取类型参数节点列表
+        type_parameters_node = node.child_by_field_name('type_parameters')
+        type_parameters = []
+        if type_parameters_node:
+            for tp in type_parameters_node.named_children:
+                type_parameters.append(tp.text)
+
+        # 获取参数列表节点
+        parameters_node = node.child_by_field_name('parameters')
+        parameters = []
+        if parameters_node:
+            for param in parameters_node.named_children:
+                parameters.append(self.parameter_declaration(param))
+
+        # 获取返回结果类型节点
+        result_node = node.child_by_field_name('result')
+        result_type = result_node.text if result_node else None
+
+        # 获 取函数体节点
+        body_node = node.child_by_field_name('body')
+        function_body = []
+        if body_node:
+            for stmt in body_node.named_children:
+                self.parse_statement(stmt, function_body)
+
+        # 构建并添加函数声明
+        function_stmt = {
+            "function_decl": {
+                "name": function_name,
+                "type_parameters": type_parameters,
+                "parameters": parameters,
+                "result_type": result_type,
+                "body": function_body
+            }
+        }
+        statements.append(function_stmt)
+        print(f"已声明函数: {function_name}")
+
+    def parameter_declaration(self, node):
+        # 解析参数声明
+        return {
+            "parameter_decl": {
+                "name": node.child_by_field_name('name').text,
+                "data_type": node.child_by_field_name('data_type').text if node.child_by_field_name('data_type') else None
+            }
+        }
+
+    def parse_statement(self, node, body):
+        # 简化的语句解析逻辑
+        stmt = {
+            "type": node.type,
+            "content": node.text
+        }
+        body.append(stmt)
+   ```
 ## 测试用例与结果
 1. 宋岱桉部分
    1. method_declaration
@@ -336,9 +421,9 @@
         return a + b + c
     }
     ```
-    测试结果：
+   测试结果：
    [{'method_decl': {'attr': 'interface_method',
-                  'data_type': 'int',
+                    'data_type': 'int',
                   'name': 'Add',
                   'parameters': [{'parameter_decl': {'name': 'a',
                                                      'data_type': 'int',
@@ -1114,3 +1199,210 @@
                                                       'body': None}}],
                          'nested': []}}]
     ```
+3.郑仁哲部分
+  测试样例：
+  ```
+// main.go
+package main
+
+import (
+    "fmt"
+    "math"
+)
+
+// Simple function with no parameters and no return value
+func printHello() {
+    fmt.Println("Hello, world!")
+}
+
+// Function with two parameters and a return value
+func add(x int, y int) int {
+    return x + y
+}
+
+// Function demonstrating named return value
+func divide(dividend float64, divisor float64) (result float64, err error) {
+    if divisor == 0.0 {
+        err = fmt.Errorf("cannot divide by zero")
+        return
+    }
+    result = dividend / divisor
+    return result, nil
+}
+
+// Function with variadic parameters
+func sum(numbers ...int) int {
+    total := 0
+    for _, number := range numbers {
+        total += number
+    }
+    return total
+}
+
+// Main function calls other functions
+func main() {
+    printHello()
+    result := add(5, 7)
+    fmt.Println("Result of add: ", result)
+
+    quotient, err := divide(5.4, 2.0)
+    if err != nil {
+        fmt.Println("Error:", err)
+    } else {
+        fmt.Println("Result of divide:", quotient)
+    }
+
+    total := sum(1, 2, 3, 4, 5)
+    fmt.Println("Result of sum:", total)
+}
+  ```
+测试结果：
+   ```
+  [{'package_stmt': {'name': 'main'}}, {'import_stmt': {'name': '"fmt"'}},
+ {'import_stmt': {'name': '"math"'}},
+ {'function_decl': {'name': b'printHello',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'result_type': None,
+                    'body': [{'type': 'expression_statement',
+                              'content': b'fmt.Println("Hello, world!")'}]}},
+ {'function_decl': {'name': b'add',
+                    'type_parameters': [],
+                    'parameters': [{'parameter_decl': {'name': b'x',
+                                                       'data_type': None}},
+                                   {'parameter_decl': {'name': b'y',
+                                                       'data_type': None}}],
+                    'result_type': b'int',
+                    'body': [{'type': 'return_statement',
+                              'content': b'return x + y'}]}},
+ {'function_decl': {'name': b'divide',
+                    'type_parameters': [],
+                    'parameters': [{'parameter_decl': {'name': b'dividend',
+                                                       'data_type': None}},
+                                   {'parameter_decl': {'name': b'divisor',
+                                                       'data_type': None}}],
+                    'result_type': b'(result float64, err error)',
+                    'body': [{'type': 'if_statement',
+                              'content': b'if divisor == 0.0 {\n        err '
+                                         b'= fmt.Errorf("cannot divide by zero"'
+                                         b')\n        return\n    }'},
+                             {'type': 'assignment_statement',
+                              'content': b'result = dividend / divisor'},
+                             {'type': 'return_statement',
+                              'content': b'return result, nil'}]}},
+ {'function_decl': {'name': b'sum',
+                    'type_parameters': [],
+                    'parameters': [{'parameter_decl': {'name': b'numbers',
+                                                       'data_type': None}}],
+                    'result_type': b'int',
+                    'body': [{'type': 'short_var_declaration',
+                              'content': b'total := 0'},
+                             {'type': 'for_statement',
+                              'content': b'for _, number := range numbers {'
+                                         b'\n        total += number\n    }'},
+                             {'type': 'return_statement',
+                              'content': b'return total'}]}},
+ {'function_decl': {'name': b'main',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'result_type': None,
+                    'body': [{'type': 'expression_statement',
+                              'content': b'printHello()'},
+                             {'type': 'short_var_declaration',
+                              'content': b'result := add(5, 7)'},
+                             {'type': 'expression_statement',
+                              'content': b'fmt.Println("Result of add: ", resul'
+                                         b't)'},
+                             {'type': 'short_var_declaration',
+                              'content': b'quotient, err := divide(5.4, 2.0)'},
+                             {'type': 'if_statement',
+                              'content': b'if err != nil {\n        fmt.Prin'
+                                         b'tln("Error:", err)\n    } else {\n'
+                                         b'        fmt.Println("Result of divid'
+                                         b'e:", quotient)\n    }'},
+                             {'type': 'short_var_declaration',
+                              'content': b'total := sum(1, 2, 3, 4, 5)'},
+                             {'type': 'expression_statement',
+                              'content': b'fmt.Println("Result of sum:", total)'}]}}]
+[{'operation': 'package_stmt', 'stmt_id': 1, 'name': 'main'},
+ {'operation': 'import_stmt', 'stmt_id': 2, 'name': '"fmt"'},
+ {'operation': 'import_stmt', 'stmt_id': 3, 'name': '"math"'},
+ {'operation': 'function_decl',
+  'stmt_id': 4,
+  'name': b'printHello',
+  'type_parameters': None,
+  'parameters': None,
+  'result_type': None,
+  'body': 5},
+ {'operation': 'block_start', 'stmt_id': 5, 'parent_stmt_id': 4},
+ {'operation': 'type', 'stmt_id': 6},
+ {'operation': 'block_end', 'stmt_id': 5, 'parent_stmt_id': 4},
+ {'operation': 'function_decl',
+  'stmt_id': 7,
+  'name': b'add',
+  'type_parameters': None,
+  'parameters': 8,
+  'result_type': b'int',
+  'body': 11},
+ {'operation': 'block_start', 'stmt_id': 8, 'parent_stmt_id': 7},
+ {'operation': 'parameter_decl', 'stmt_id': 9, 'name': b'x', 'data_type': None},
+ {'operation': 'parameter_decl',
+  'stmt_id': 10,
+  'name': b'y',
+  'data_type': None},
+ {'operation': 'block_end', 'stmt_id': 8, 'parent_stmt_id': 7},
+ {'operation': 'block_start', 'stmt_id': 11, 'parent_stmt_id': 7},
+ {'operation': 'type', 'stmt_id': 12},
+ {'operation': 'block_end', 'stmt_id': 11, 'parent_stmt_id': 7},
+ {'operation': 'function_decl',
+  'stmt_id': 13,
+  'name': b'divide',
+  'type_parameters': None,
+  'parameters': 14,
+  'result_type': b'(result float64, err error)',
+  'body': 17},
+ {'operation': 'block_start', 'stmt_id': 14, 'parent_stmt_id': 13},
+ {'operation': 'parameter_decl',
+  'stmt_id': 15,
+  'name': b'dividend',
+  'data_type': None},
+ {'operation': 'parameter_decl',
+  'stmt_id': 16,
+  'name': b'divisor',
+  'data_type': None},
+ {'operation': 'block_end', 'stmt_id': 14, 'parent_stmt_id': 13},
+ {'operation': 'block_start', 'stmt_id': 17, 'parent_stmt_id': 13},
+ {'operation': 'type', 'stmt_id': 18}, {'operation': 'type', 'stmt_id': 19},
+ {'operation': 'type', 'stmt_id': 20},
+ {'operation': 'block_end', 'stmt_id': 17, 'parent_stmt_id': 13},
+ {'operation': 'function_decl',
+  'stmt_id': 21,
+  'name': b'sum',
+  'type_parameters': None,
+  'parameters': 22,
+  'result_type': b'int',
+  'body': 24},
+ {'operation': 'block_start', 'stmt_id': 22, 'parent_stmt_id': 21},
+ {'operation': 'parameter_decl',
+  'stmt_id': 23,
+  'name': b'numbers',
+  'data_type': None},
+ {'operation': 'block_end', 'stmt_id': 22, 'parent_stmt_id': 21},
+ {'operation': 'block_start', 'stmt_id': 24, 'parent_stmt_id': 21},
+ {'operation': 'type', 'stmt_id': 25}, {'operation': 'type', 'stmt_id': 26},
+ {'operation': 'type', 'stmt_id': 27},
+ {'operation': 'block_end', 'stmt_id': 24, 'parent_stmt_id': 21},
+ {'operation': 'function_decl',
+  'stmt_id': 28,
+  'name': b'main',
+  'type_parameters': None,
+  'parameters': None,
+  'result_type': None,
+  'body': 29},
+ {'operation': 'block_start', 'stmt_id': 29, 'parent_stmt_id': 28},
+ {'operation': 'type', 'stmt_id': 30}, {'operation': 'type', 'stmt_id': 31},
+ {'operation': 'type', 'stmt_id': 32}, {'operation': 'type', 'stmt_id': 33},
+ {'operation': 'type', 'stmt_id': 34}, {'operation': 'type', 'stmt_id': 35},
+ {'operation': 'type', 'stmt_id': 36},
+ {'operation': 'block_end', 'stmt_id': 29, 'parent_stmt_id': 28}]
+   ```
