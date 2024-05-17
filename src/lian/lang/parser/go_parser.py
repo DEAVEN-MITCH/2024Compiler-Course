@@ -831,9 +831,10 @@ class Parser(common_parser.Parser):
 
 
     def if_statement(self, node, statements):
-        init_part = self.find_child_by_field(node, "condition")
+        init_part = self.find_child_by_field(node, "initializer")
+        init_body = []
         if init_part:
-            pass #包含decl，下次再写
+            self.parse(init_part,init_body)
         condition_part = self.find_child_by_field(node, "condition")
         true_part = self.find_child_by_field(node, "consequence")
         false_part = self.find_child_by_field(node, "alternative")
@@ -845,9 +846,9 @@ class Parser(common_parser.Parser):
         if false_part:
             false_body = []
             self.parse(false_part, false_body)
-            statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body, "else_body": false_body}})
+            statements.append({"if_stmt": {"init_body": init_body,"condition": shadow_condition, "then_body": true_body, "else_body": false_body}})
         else:
-            statements.append({"if_stmt": {"condition": shadow_condition, "then_body": true_body}})
+            statements.append({"if_stmt": {"init_body": init_body,"condition": shadow_condition, "then_body": true_body}})
 
     def for_statement(self, node, statements):
         exp = self.find_child_by_type(node, "binary_expression")
