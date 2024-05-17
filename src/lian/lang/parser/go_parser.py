@@ -259,9 +259,89 @@ class Parser(common_parser.Parser):
             'short_var_declaration':self.short_var_declaration,
             'method_declaration':self.method_declaration,
             'import_declaration':self.import_declaration,
+            'function_declaration':self.function_declaration,
+            'package_clause':self.package_clause,
 
         }
         return DECLARATION_HANDLER_MAP.get(node.type, None)
+    def package_clause(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 获取 package 声明的包名标识符节点
+        package_identifier_node = node.child_by_field_name('name')
+
+        # 确认我们成功地获得了包名标识符节点
+        if package_identifier_node and package_identifier_node.is_named:
+            package_name = package_identifier_node.text  # 使用节点的 text 属性获取包名
+
+            # 将 package 声明添加到语句列表
+            statements.append({"package_stmt": {"name": package_name}})
+            print(f"Package declared: {package_name}")
+        else:
+            print("No valid package identifier found in package clause.")
+    
+    
+    def function_declaration(self, node, statements):
+        print(f"node: {self.read_node_text(node)}")
+        print(f"node: {node.sexp()}")
+        # 获取函数名节点
+        name_node = node.child_by_field_name('name')
+        function_name = name_node.text if name_node else "UnnamedFunction"
+
+        # 获取类型参数节点列表
+        type_parameters_node = node.child_by_field_name('type_parameters')
+        type_parameters = []
+        if type_parameters_node:
+            for tp in type_parameters_node.named_children:
+                type_parameters.append(tp.text)
+
+        # 获取参数列表节点
+        parameters_node = node.child_by_field_name('parameters')
+        parameters = []
+        if parameters_node:
+            for param in parameters_node.named_children:
+                parameters.append(self.parameter_declaration(param))
+
+        # 获取返回结果类型节点
+        result_node = node.child_by_field_name('result')
+        result_type = result_node.text if result_node else None
+
+        # 获 取函数体节点
+        body_node = node.child_by_field_name('body')
+        function_body = []
+        if body_node:
+            for stmt in body_node.named_children:
+                self.parse_statement(stmt, function_body)
+
+        # 构建并添加函数声明
+        function_stmt = {
+            "function_decl": {
+                "name": function_name,
+                "type_parameters": type_parameters,
+                "parameters": parameters,
+                "result_type": result_type,
+                "body": function_body
+            }
+        }
+        statements.append(function_stmt)
+        print(f"已声明函数: {function_name}")
+
+    def parameter_declaration(self, node):
+        # 解析参数声明
+        return {
+            "parameter_decl": {
+                "name": node.child_by_field_name('name').text,
+                "data_type": node.child_by_field_name('data_type').text if node.child_by_field_name('data_type') else None
+            }
+        }
+
+    def parse_statement(self, node, body):
+        # 简化的语句解析逻辑
+        stmt = {
+            "type": node.type,
+            "content": node.text
+        }
+        body.append(stmt)
 
     def is_declaration(self, node):
         return self.check_declaration_handler(node) is not None
