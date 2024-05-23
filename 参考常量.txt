@@ -1,0 +1,16 @@
+ControlFlowKind = util.SimpleEnum({
+    "EMPTY"                 : 0,
+    "IF_TRUE"               : 1,
+    "IF_FALSE"              : 2,
+    "FOR_CONDITION"         : 3,
+    "LOOP_TRUE"             : 4,
+    "LOOP_FALSE"            : 5,
+    "BREAK"                 : 6,
+    "CONTINUE"              : 7,
+    "RETURN"                : 8,
+    "CATCH_TRUE"            : 9,
+    "CATCH_FALSE"           : 10,
+    "CATCH_FINALLY"         : 11,
+    "PARAMETER_UNINIT"  	: 12,
+    "PARAMETER_INIT" 		: 13
+})
