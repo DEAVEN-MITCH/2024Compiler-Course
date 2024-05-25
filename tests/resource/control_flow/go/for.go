@@ -1,9 +1,14 @@
 func print() {
+	a=0
     for i := 1; i <= 5; i++ {
         fmt.Println(i)
     }
 	c=0
+	for ; i < 10; i++ {
+        a, b = b, a+b
+    }
 }
+
 
 /*  序号标注，方便对照
 [10{'method_decl': {'name': 'print',

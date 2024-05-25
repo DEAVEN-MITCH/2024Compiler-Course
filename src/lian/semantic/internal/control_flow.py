@@ -118,16 +118,16 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         return ([], -1)
 
     def analyze_for_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
-        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
-        
-        last_stmts_of_init_body = [CFGNode(current_stmt, ControlFlowKind.EMPTY)]
+        #暂不支持condition为空的情况
+        last_stmts_of_init_body = parent_stmts
         init_body_id = current_stmt.init_body
         if not util.isna(init_body_id):
             init_body = self.read_block(current_block, init_body_id)
             if len(init_body) != 0:
-                last_stmts_of_init_body = self.analyze_block(init_body, last_stmts_of_init_body, global_special_stmts)
+                last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts)
+        self.link_parent_stmts_to_current_stmt(last_stmts_of_init_body, current_stmt)
 
-        last_stmts_of_condition_prebody = [CFGNode(last_stmts_of_init_body, ControlFlowKind.EMPTY)]
+        last_stmts_of_condition_prebody = [CFGNode(current_stmt, ControlFlowKind.EMPTY)]
         condition_prebody_id = current_stmt.condition_prebody
         first_stmt_of_condition = None
         if not util.isna(condition_prebody_id):
@@ -143,6 +143,7 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
             body = self.read_block(current_block, body_id)
             if len(body) != 0:
                 last_stmts_of_body = self.analyze_block(body, condition_prebody_node, global_special_stmts)
+
 
         last_stmts_of_update_body = [CFGNode(last_stmts_of_body, ControlFlowKind.EMPTY)]
         update_body_id = current_stmt.update_body
