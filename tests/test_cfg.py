@@ -63,7 +63,7 @@ class CFGTestCase(unittest.TestCase):
         pprint.pprint(result)
         print("+ current result")
         pprint.pprint(edge_list)
-        assert result == edge_list
+        assert result == edge_list ##由于for的cfg_result还没写，如果要跑的话先把这行注释掉 ——sda
 
 
     @classmethod
@@ -104,7 +104,19 @@ class CFGTestCase(unittest.TestCase):
                 if file_name == "if":
                     patched_testcase = patch(
                         'sys.argv',
-                        ["", "run", "-f", "-p", "-d", "-l", "python,java", target_file, "-w", config.TEST_CONFIG.config.output_dir]
+                        ["", "run", "-f", "-p", "-d", "-l", "python,go", target_file, "-w", config.TEST_CONFIG.config.output_dir]
+                        # ["", "run", "-f", "-l", "python,java", target_file, "-w", config.TEST_CONFIG.config.output_dir]
+                    )(
+                        self.raw_test
+                    )
+                    patched_testcase()
+                    cfg_path = os.path.join(config.TEST_CONFIG.config.output_dir, "semantic/glang_bundle0.cfg")
+                    cfg = self.read_cfg(cfg_path)
+                    self.compare_cfg(cfg, target_file)
+                else:
+                    patched_testcase = patch(
+                        'sys.argv',
+                        ["", "run", "-f", "-p", "-d", "-l", "go", target_file, "-w", config.TEST_CONFIG.config.output_dir]
                         # ["", "run", "-f", "-l", "python,java", target_file, "-w", config.TEST_CONFIG.config.output_dir]
                     )(
                         self.raw_test
