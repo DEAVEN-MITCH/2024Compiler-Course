@@ -761,7 +761,7 @@ class Parser(common_parser.Parser):
         for expr in init:
             statements.append(expr)
         for target in returns:
-            statements.append({"return": {"target": target}})
+            statements.append({"return_stmt": {"target": target}})
             
     def expression_list(self, node, statements):
         tmp_var_list = []

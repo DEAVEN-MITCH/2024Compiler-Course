@@ -14,7 +14,14 @@ from lian.semantic.internal.internal_structure import (
     CFGNode,
     InternalAnalysisTemplate
 )
-
+class specialBind():
+    def __init__(self,stmt,next):
+        self.stmt=stmt#label_stmt
+        self.next_stmt=next
+    def match(self,label):
+        if self.next_stmt is None or (self.next_stmt.operation!='forin_stmt' and self.next_stmt.operation!='for_stmt'):
+            return False
+        return self.stmt.name==label
 class ControlFlowAnalysis(InternalAnalysisTemplate):
     def init(self):
         self.name = AnalysisPhaseName.ControlFlowGraph
@@ -22,20 +29,14 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
 
         self.stmt_handlers = {
             "if_stmt"       : self.analyze_if_stmt,
-            "while_stmt"    : self.analyze_while_stmt,
-            "dowhile_stmt"  : self.analyze_dowhile_stmt,
             "for_stmt"      : self.analyze_for_stmt,
             "forin_stmt"    : self.analyze_while_stmt,
             "break_stmt"    : self.analyze_break_stmt,
             "continue_stmt" : self.analyze_continue_stmt,
-            "try_stmt"      : self.analyze_try_stmt,
             "return_stmt"   : self.analyze_return_stmt,
-            "yield"         : self.analyze_yield_stmt,
             "method_decl"   : self.analyze_method_decl_stmt,
-            "class_decl"    : self.analyze_decl_stmt,
-            "record_decl"   : self.analyze_decl_stmt,
-            "interface_decl": self.analyze_decl_stmt,
-            "struct_decl"   : self.analyze_decl_stmt,
+            # "goto_stmt":self.analyze_goto_stmt,
+            "label_stmt":self.analyze_label_stmt,
         }
 
 
@@ -170,11 +171,35 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         return ([], -1)
 
     def analyze_break_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        global_special_stmts.append(current_stmt)
+        #return -1 to exit the block analyze because the rest won't be excecuted and break should link to the next stmt which is processed by the matched outer loop
         return ([], -1)
-
     def analyze_continue_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        global_special_stmts.append(current_stmt)
+        #return -1 to exit the block analyze because the rest won't be excecuted and continue should link to the next stmt which is processed by the matched outer loop
         return ([], -1)
-
+    
+    def analyze_label_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        #deal with previous goto
+        for stmt in global_special_stmts.copy():
+            if isinstance(stmt,specialBind):
+                continue
+            if isinstance(stmt, CFGNode) and stmt.stmt.operation=="goto_stmt"and stmt.stmt.target==current_stmt.name :
+                # if stmtstmt.operation == "goto_stmt" and stmt.name == current_stmt.name:
+                self.cfg.add_edge(stmt.stmt,current_stmt,stmt.edge)
+                global_special_stmts.remove(stmt)
+            elif stmt.operation == "goto_stmt" and stmt.target == current_stmt.name:
+                self.cfg.add_edge(stmt,current_stmt)
+                global_special_stmts.remove(stmt)
+        next_index=current_stmt._index+1
+        next_stmt=current_block.access(next_index) if next_index<len(current_block) else None
+        newBind=specialBind(current_stmt,next_stmt)
+        global_special_stmts.append(newBind)
+        return ([current_stmt], next_index-1)
+    
     def analyze_yield_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         return ([], -1)
 
