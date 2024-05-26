@@ -18,9 +18,11 @@ class specialBind():
     def __init__(self,stmt,next):
         self.stmt=stmt#label_stmt
         self.next_stmt=next
-    def match(self,label):
+    def match_borc(self,label):
         if self.next_stmt is None or (self.next_stmt.operation!='forin_stmt' and self.next_stmt.operation!='for_stmt'):
             return False
+        return self.stmt.name==label
+    def match_goto(self,label):
         return self.stmt.name==label
 class ControlFlowAnalysis(InternalAnalysisTemplate):
     def init(self):
