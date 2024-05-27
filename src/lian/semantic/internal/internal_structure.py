@@ -201,8 +201,8 @@ class BasicGraph:
         plt.savefig(path)
 
     def _add_one_edge(self, src_stmt_id, dst_stmt_id, weight):
-        if src_stmt_id == dst_stmt_id:
-            return
+        # if src_stmt_id == dst_stmt_id:
+        #     return
         if src_stmt_id < 0:
             return
         if config.DEBUG_FLAG:
