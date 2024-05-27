@@ -18,12 +18,14 @@ class specialBind():
     def __init__(self,stmt,next):
         self.stmt=stmt#label_stmt
         self.next_stmt=next
-    def match_borc(self,label):
-        if self.next_stmt is None or (self.next_stmt.operation!='forin_stmt' and self.next_stmt.operation!='for_stmt'):
-            return False
+    def match(self,label):
         return self.stmt.name==label
-    def match_goto(self,label):
-        return self.stmt.name==label
+    def label_for(self,for_stmt):
+        return self.next_stmt.stmt_id==for_stmt.stmt_id
+    def __str__(self):
+        return 'current:'+str(self.stmt.operation)+' next:'+(str(self.next_stmt.operation) if self.next_stmt is not None else '')
+    def __repr__(self) -> str:
+        return str(self)
 class ControlFlowAnalysis(InternalAnalysisTemplate):
     def init(self):
         self.name = AnalysisPhaseName.ControlFlowGraph
@@ -121,44 +123,132 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         return ([], -1)
 
     def analyze_for_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
-        #暂不支持condition为空的情况
+        
+        #abstract break/continue in global_special_stmts first to avoid outer break interacts with current loop
+        global_special_stmts_without_outer_bc=global_special_stmts.copy()
+        labelBind=None
+        for stmt in global_special_stmts:
+            # print(stmt,"int gs:")
+            if isinstance(stmt,specialBind):
+                # print(stmt.next_stmt,current_stmt)
+                if(stmt.label_for(current_stmt)):
+                    labelBind=stmt
+                continue
+            if stmt.operation=="break_stmt" or stmt.operation=="continue_stmt":
+                global_special_stmts_without_outer_bc.remove(stmt)
+        # print(str(labelBind),'''**********''')
+        previous=[]
+
+        #parent to init
         last_stmts_of_init_body = parent_stmts
         init_body_id = current_stmt.init_body
         if not util.isna(init_body_id):
             init_body = self.read_block(current_block, init_body_id)
             if len(init_body) != 0:
-                last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts)
-        self.link_parent_stmts_to_current_stmt(last_stmts_of_init_body, current_stmt)
+                last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts_without_outer_bc)
+        
 
-        last_stmts_of_condition_prebody = [CFGNode(current_stmt, ControlFlowKind.EMPTY)]
+        #init to condition
+        last_stmts_of_condition_prebody=last_stmts_of_init_body
         condition_prebody_id = current_stmt.condition_prebody
         first_stmt_of_condition = None
         if not util.isna(condition_prebody_id):
             condition_prebody = self.read_block(current_block, condition_prebody_id)
             if len(condition_prebody) != 0:
-                last_stmts_of_condition_prebody = self.analyze_block(condition_prebody, last_stmts_of_condition_prebody, global_special_stmts)
+                last_stmts_of_condition_prebody = self.analyze_block(condition_prebody, last_stmts_of_condition_prebody, global_special_stmts_without_outer_bc)
                 first_stmt_of_condition = condition_prebody.access(0)
 
+            
+        #condition to for
 
-        condition_prebody_node = [CFGNode(last_stmts_of_condition_prebody, ControlFlowKind.IF_TRUE)]
+        self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_condition_prebody, current_stmt,ControlFlowKind.FOR_CONDITION)
+
+        #for to body or outof loop
+        last_stmts_of_body = [CFGNode(current_stmt, ControlFlowKind.LOOP_TRUE)]
+        previous.append(CFGNode(current_stmt, ControlFlowKind.LOOP_FALSE))
         body_id = current_stmt.body
+        first_stmt_of_body=None
         if not util.isna(body_id):
             body = self.read_block(current_block, body_id)
             if len(body) != 0:
-                last_stmts_of_body = self.analyze_block(body, condition_prebody_node, global_special_stmts)
-
-
-        last_stmts_of_update_body = [CFGNode(last_stmts_of_body, ControlFlowKind.EMPTY)]
+                last_stmts_of_body = self.analyze_block(body, last_stmts_of_body, global_special_stmts_without_outer_bc)
+                first_stmt_of_body =body.access(0)
+        #body to update
+        last_stmts_of_update_body = last_stmts_of_body
         update_body_id = current_stmt.update_body
+        first_stmt_of_update_body = None
         if not util.isna(update_body_id):
             update_body = self.read_block(current_block, update_body_id)
             if len(update_body) != 0:
-                last_stmts_of_update_body = self.analyze_block(update_body, last_stmts_of_update_body, global_special_stmts)
+                last_stmts_of_update_body = self.analyze_block(update_body, last_stmts_of_update_body, global_special_stmts_without_outer_bc)
+                first_stmt_of_update_body = update_body.access(0)
 
-        self.cfg.add_edge(last_stmts_of_update_body,first_stmt_of_condition)
+        #update to condition
+        logstr=''
+        for stmt in last_stmts_of_update_body:
+            if isinstance(stmt,CFGNode):
+                logstr+=stmt.stmt.operation+str(stmt.stmt.stmt_id)+str(stmt.edge)+' '
+            else:
+                logstr+=stmt.operation+str(stmt.stmt_id)+' '
+        # print(logstr)
+        if  first_stmt_of_condition is not None:
+            #link to condition
+             self.link_parent_stmts_to_current_stmt(last_stmts_of_update_body,first_stmt_of_condition)
+            
+        else:
+             #link to for when condition empty
+            # print(logstr,'with type add edge!')
+            self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_update_body,current_stmt,ControlFlowKind.FOR_CONDITION)
+        #after analyze all block,deal with the break/continue in global_special_stmts_without_outer_bc and  modify global_special_stmts
+        # print(global_special_stmts_without_outer_bc)
+        for stmt in global_special_stmts_without_outer_bc.copy():
+            if isinstance(stmt,specialBind):
+                continue
+            if stmt.operation=="break_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched break;
+                    previous.append(CFGNode(stmt,ControlFlowKind.BREAK))
+                    global_special_stmts_without_outer_bc.remove(stmt)
+
+                continue
+            if stmt.operation=="continue_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched continue;
+                    t=[CFGNode(stmt,ControlFlowKind.CONTINUE)]
+                    if first_stmt_of_update_body is not None:
+                        self.link_parent_stmts_to_current_stmt(t,first_stmt_of_update_body)
+                    elif first_stmt_of_condition is not None:
+                        self.link_parent_stmts_to_current_stmt(t,first_stmt_of_condition)
+                    else:
+                        self.link_parent_stmts_to_current_stmt(t,current_stmt)
+                        
+                    global_special_stmts_without_outer_bc.remove(stmt)
+                continue
+        for stmt in global_special_stmts_without_outer_bc:
+            if stmt not in global_special_stmts:
+                global_special_stmts.append(stmt)
+        #return 
         boundary = self.boundary_of_multi_blocks(current_block, [init_body_id,condition_prebody_id,body_id,update_body_id ])
-        condition_prebody_node[0].edge=ControlFlowKind.IF_FALSE
-        return (condition_prebody_node,boundary)
+        # print(init_body_id, condition_prebody_id, body_id, update_body_id)
+        if util.isna(init_body_id) and util.isna(body_id) and util.isna(update_body_id) and util.isna(condition_prebody_id):
+            boundary=current_stmt._index
+        # print('in for',current_stmt.stmt_id,'.previous:')
+        # for stmt in previous:
+        #     if isinstance(stmt,CFGNode):
+        #         print(stmt.stmt.operation,stmt.stmt.stmt_id,stmt.edge)
+        #     else:
+
+        #         print(stmt.operation,stmt.stmt_id)
+        # print('special_stmts:')
+        # for child in global_special_stmts:
+        #     if isinstance(child,specialBind):
+        #         print(str(child))
+        #     else:
+        #         print(child.operation,child.stmt_id)
+        # print('boundary',boundary)
+        return (previous,boundary)
 
     def analyze_try_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         return ([], -1)
@@ -233,6 +323,28 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
                 # Links non-CFGNode items
                 self.cfg.add_edge(node, current_stmt)
 
+    def link_parent_stmts_to_current_stmt_with_type(self, parent_stmts: list, current_stmt,type):
+        # print('in the with type add edge')
+        # logstr=''
+        # for stmt in parent_stmts:
+        #     if isinstance(stmt,CFGNode):
+        #         logstr+=stmt.stmt.operation+str(stmt.stmt.stmt_id)+str(stmt.edge)+' '
+        #     else:
+        #         logstr+=stmt.operation+str(stmt.stmt_id)+' '
+        # logstr+="current st:"+current_stmt.operation+str(current_stmt.stmt_id)+'\n'
+        # print(logstr)
+
+
+        for node in parent_stmts:
+            if isinstance(node, CFGNode):
+                # Assumes node.stmt and node.edge are valid attributes for CFGNode
+                if node.edge!=ControlFlowKind.EMPTY:
+                    self.cfg.add_edge(node.stmt, current_stmt, node.edge)
+                else:
+                    self.cfg.add_edge(node.stmt, current_stmt,type)
+            else:
+                # Links non-CFGNode items
+                self.cfg.add_edge(node, current_stmt,type)
     def analyze_init_block(self, current_block, parent_stmts = [], special_stmts = []):
         counter = 0
         previous = parent_stmts
