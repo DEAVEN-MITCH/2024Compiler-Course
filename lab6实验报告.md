@@ -2,6 +2,8 @@
 ## 小组成员及分工
 - 张佳和:
   stmt_handlers中`analyze_break_stmt`,`analyze_continue_stmt`,`analyze_label_stmt`,以及`analyze_for_stmt`的重写（改变原来不对的地方，并增加break\[label\]、continue\[label\]的处理）,编写continue.go、break.go测试用例来测试以上完成内容，修改test_cfg使得测试程序能测试以上用例。
+- 宋岱桉：
+    stmt_handlers中`analyze_for_stmt`基础版的书写以及`analyze_forin_stmt`（包含break\[label\]、continue\[label\]的处理）,编写for.go、forin.go测试用例来测试以上完成内容，修改test_cfg使得测试程序能测试以上用例。
 ## 实验思路及核心代码
 1. 张佳和部分：
     1. `analyze_break_stmt`,`analyze_continue_stmt`原本打算直接处理，后来发现很难确定Label的下一句，改为将这两个加到global_special中，由for_stmt或forin_stmt来处理。返回[],-1是因为后面的代码执行不到（经讨论，忽略label+被goto的情况）代码如下：
@@ -205,6 +207,82 @@
         # print('boundary',boundary)
         return (previous,boundary)
     ```
+
+2. 宋岱桉部分：
+    1. `analyze_for_stmt`
+   已在上文中阐述，不再赘述。
+    2. `analyze_forin_stmt`部分，与for内容相当，主要区别是处理的块不同。首先，从全局特殊语句列表中抽取“break”和“continue”语句，因为这两个语句可能会影响当前的循环，因此需要单独处理。同时，为了避免外部循环的“break”和“continue”语句影响当前循环，创建一个不包含外部“break”和“continue”的全局特殊语句列表。然后处理循环初始化部分（init），将父语句连接到初始化部分。如果有初始化代码块存在，则将其分析为控制流图，并将其最后的语句与父语句连接起来。将初始化部分与循环条件部分（for-in）连接，使得控制流从初始化到循环条件。处理循环体部分（body），将其分析为控制流图，并将其最后的语句与当前循环语句连接起来。将全局特殊语句列表中与当前循环相关的“break”和“continue”语句进行处理。如果遇到匹配当前循环的“break”语句，则添加到前驱节点列表中；如果遇到匹配当前循环的“continue”语句，则尝试连接到循环的更新部分、条件部分或循环本身。将剩余的全局特殊语句（即不与当前循环相关的语句）添加到全局特殊语句列表中。最后，确定边界，即该循环控制流图的边界。如果初始化和循环体均不存在，则边界为当前循环语句本身的索引。
+    ```py
+    def analyze_forin_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        #abstract break/continue in global_special_stmts first to avoid outer break interacts with current loop
+        global_special_stmts_without_outer_bc=global_special_stmts.copy()
+        labelBind=None
+        for stmt in global_special_stmts:
+            # print(stmt,"int gs:")
+            if isinstance(stmt,specialBind):
+                # print(stmt.next_stmt,current_stmt)
+                if(stmt.label_for(current_stmt)):
+                    labelBind=stmt
+                continue
+            if stmt.operation=="break_stmt" or stmt.operation=="continue_stmt":
+                global_special_stmts_without_outer_bc.remove(stmt)
+        # print(str(labelBind),'''**********''')
+        previous=[]
+        #parent to init
+        last_stmts_of_init_body = parent_stmts
+        init_body_id = current_stmt.array_read
+        if not util.isna(init_body_id):
+            init_body = self.read_block(current_block, init_body_id)
+            if len(init_body) != 0:
+                last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts_without_outer_bc)
+        
+        #init to forin
+        self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_init_body, current_stmt,ControlFlowKind.FOR_CONDITION)
+        
+        #for to body or outof loop
+        last_stmts_of_body = [CFGNode(current_stmt, ControlFlowKind.LOOP_TRUE)]
+        previous.append(CFGNode(current_stmt, ControlFlowKind.LOOP_FALSE))
+        body_id = current_stmt.body
+        first_stmt_of_body=None
+        if not util.isna(body_id):
+            body = self.read_block(current_block, body_id)
+            if len(body) != 0:
+                last_stmts_of_body = self.analyze_block(body, last_stmts_of_body, global_special_stmts_without_outer_bc)
+                first_stmt_of_body =body.access(0)
+
+        #body to forin
+        self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_body,current_stmt,ControlFlowKind.FOR_CONDITION)
+
+        for stmt in global_special_stmts_without_outer_bc.copy():
+            if isinstance(stmt,specialBind):
+                continue
+            if stmt.operation=="break_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched break;
+                    previous.append(CFGNode(stmt,ControlFlowKind.BREAK))
+                    global_special_stmts_without_outer_bc.remove(stmt)
+
+                continue
+            if stmt.operation=="continue_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched continue;
+                    t=[CFGNode(stmt,ControlFlowKind.CONTINUE)]
+                    self.link_parent_stmts_to_current_stmt(t,current_stmt)
+                        
+                    global_special_stmts_without_outer_bc.remove(stmt)
+                continue
+        for stmt in global_special_stmts_without_outer_bc:
+            if stmt not in global_special_stmts:
+                global_special_stmts.append(stmt)
+        #return 
+        boundary = self.boundary_of_multi_blocks(current_block, [init_body_id,body_id])
+        # print(init_body_id, condition_prebody_id, body_id, update_body_id)
+        if util.isna(init_body_id) and util.isna(body_id):
+            boundary=current_stmt._index
+        return (previous,boundary)
+        ```
 ## 测试用例与结果
 1. 张佳和部分
     1. break.go
@@ -1109,3 +1187,535 @@
      (53, 54, 5),
      (54, -1, 0)]
      ```
+2. 宋岱桉部分
+    1. forin.go
+    ```go
+    func num_sum() {
+    numbers := []int{1, 2, 3, 4, 5}
+    sum := 0
+    count := 0
+    for _, num := range numbers {
+        sum += num
+        count += 1
+    }
+    fmt.Println("切片中所有元素的总和为:", sum)
+    }
+
+    func SimpleBreak() {
+        outerLoop:
+        for i := range numbers {
+            fmt.Printf("Outer loop: %d\n", i)
+            if gg{
+                break;
+            }
+            for j := range numbers {
+                fmt.Printf("Inner loop: %d\n", j)
+                if j == 1 {
+                    break outerLoop
+                }
+                if j>6{
+                    break;
+                    continue
+                }
+            }
+        }
+        eex+1
+    }
+    func Emp(){
+        for range numbers{
+        }
+    }
+    func EmpBreak(){
+        for range numbers{
+            break
+        }
+    }
+    ```
+    测试结果：
+    ``` 
+    [DEBUG]: Options(recursive=False, input=['/app/experiment_3/tests/resource/control_flow/go/forin.go'], workspace='/app/experiment_3/tests/lian_workspace', debug=True, force=True, benchmark=False, print_stmts=True, cores=1, android=False, apps=[], sub_command='run', language=['python', 'go'])
+    [WARNING]: With the force mode flag, the workspace is being rewritten: /app/experiment_3/tests/lian_workspace
+    [DEBUG]: Lang-Parser: /app/experiment_3/tests/lian_workspace/src/forin.go
+    [{'method_decl': {'name': 'num_sum',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'data_type': [],
+                    'body': [{'composite_literal': {'type': ['slice_type',
+                                                            {'element': 'int'}],
+                                                    'composite_body': [['1'],
+                                                                        ['2'],
+                                                                        ['3'],
+                                                                        ['4'],
+                                                                        ['5']]}},
+                            {'variable_decl': {'attr': 'short_var',
+                                                'data_type': '',
+                                                'name': 'numbers'}},
+                            {'assign_stmt': {'target': 'numbers',
+                                                'operand': '%'}},
+                            {'variable_decl': {'attr': 'short_var',
+                                                'data_type': '',
+                                                'name': 'sum'}},
+                            {'assign_stmt': {'target': 'sum', 'operand': '0'}},
+                            {'variable_decl': {'attr': 'short_var',
+                                                'data_type': '',
+                                                'name': 'count'}},
+                            {'assign_stmt': {'target': 'count', 'operand': '0'}},
+                            {'forin_stmt': {'name': '%v1',
+                                            'target': 'numbers',
+                                            'array_read': [{'target': '_',
+                                                            'array': '%v1',
+                                                            'index': 0},
+                                                            {'target': 'num',
+                                                            'array': '%v1',
+                                                            'index': 1}],
+                                            'body': [{'assign_stmt': {'target': 'sum',
+                                                                        'operator': '+',
+                                                                        'operand': 'sum',
+                                                                        'operand2': 'num'}},
+                                                        {'assign_stmt': {'target': 'count',
+                                                                        'operator': '+',
+                                                                        'operand': 'count',
+                                                                        'operand2': '1'}}]}},
+                            {'field_read': {'target': '%v2',
+                                            'receiver_object': 'fmt',
+                                            'field': 'Println'}},
+                            {'call_stmt': {'attr': [],
+                                            'target': '%v3',
+                                            'name': '%v2',
+                                            'type_parameters': [],
+                                            'args': ['"切片中所有元素的总和为:"',
+                                                    'sum']}}]}},
+    {'method_decl': {'name': 'SimpleBreak',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'data_type': [],
+                    'body': [{'label_stmt': {'name': 'outerLoop'}},
+                            {'forin_stmt': {'name': 'i',
+                                            'target': 'numbers',
+                                            'body': [{'field_read': {'target': '%v0',
+                                                                        'receiver_object': 'fmt',
+                                                                        'field': 'Printf'}},
+                                                        {'call_stmt': {'attr': [],
+                                                                    'target': '%v1',
+                                                                    'name': '%v0',
+                                                                    'type_parameters': [],
+                                                                    'args': ['"Outer '
+                                                                                'loop: '
+                                                                                '%d\\n"',
+                                                                                'i']}},
+                                                        {'if_stmt': {'condition': 'gg',
+                                                                    'then_body': [{'break_stmt': {'target': ''}}]}},
+                                                        {'forin_stmt': {'name': 'j',
+                                                                        'target': 'numbers',
+                                                                        'body': [{'field_read': {'target': '%v0',
+                                                                                                'receiver_object': 'fmt',
+                                                                                                'field': 'Printf'}},
+                                                                                {'call_stmt': {'attr': [],
+                                                                                                'target': '%v1',
+                                                                                                'name': '%v0',
+                                                                                                'type_parameters': [],
+                                                                                                'args': ['"Inner '
+                                                                                                        'loop: '
+                                                                                                        '%d\\n"',
+                                                                                                        'j']}},
+                                                                                {'assign_stmt': {'target': '%v2',
+                                                                                                'operator': '==',
+                                                                                                'operand': 'j',
+                                                                                                'operand2': '1'}},
+                                                                                {'if_stmt': {'condition': '%v2',
+                                                                                            'then_body': [{'break_stmt': {'target': 'outerLoop'}}]}},
+                                                                                {'assign_stmt': {'target': '%v3',
+                                                                                                'operator': '>',
+                                                                                                'operand': 'j',
+                                                                                                'operand2': '6'}},
+                                                                                {'if_stmt': {'condition': '%v3',
+                                                                                            'then_body': [{'break_stmt': {'target': ''}},    
+                                                                                                            {'continue_stmt': {'target': ''}}]}}]}}]}},
+                            {'assign_stmt': {'target': '%v0',
+                                                'operator': '+',
+                                                'operand': 'eex',
+                                                'operand2': '1'}}]}},
+    {'method_decl': {'name': 'Emp',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'data_type': [],
+                    'body': [{'forin_stmt': {'name': '%v0',
+                                            'target': 'numbers',
+                                            'array_read': [],
+                                            'body': []}}]}},
+    {'method_decl': {'name': 'EmpBreak',
+                    'type_parameters': [],
+                    'parameters': [],
+                    'data_type': [],
+                    'body': [{'forin_stmt': {'name': '%v0',
+                                            'target': 'numbers',
+                                            'array_read': [],
+                                            'body': [{'break_stmt': {'target': ''}}]}}]}}]
+    [{'operation': 'method_decl',
+    'parent_stmt_id': 0,
+    'stmt_id': 10,
+    'name': 'num_sum',
+    'type_parameters': None,
+    'parameters': None,
+    'data_type': None,
+    'body': 11},
+    {'operation': 'block_start', 'stmt_id': 11, 'parent_stmt_id': 10},
+    {'operation': 'composite_literal',
+    'parent_stmt_id': 11,
+    'stmt_id': 12,
+    'type': "['slice_type', {'element': 'int'}]",
+    'composite_body': "[['1'], ['2'], ['3'], ['4'], ['5']]"},
+    {'operation': 'variable_decl',
+    'parent_stmt_id': 11,
+    'stmt_id': 13,
+    'attr': 'short_var',
+    'data_type': '',
+    'name': 'numbers'},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 11,
+    'stmt_id': 14,
+    'target': 'numbers',
+    'operand': '%'},
+    {'operation': 'variable_decl',
+    'parent_stmt_id': 11,
+    'stmt_id': 15,
+    'attr': 'short_var',
+    'data_type': '',
+    'name': 'sum'},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 11,
+    'stmt_id': 16,
+    'target': 'sum',
+    'operand': '0'},
+    {'operation': 'variable_decl',
+    'parent_stmt_id': 11,
+    'stmt_id': 17,
+    'attr': 'short_var',
+    'data_type': '',
+    'name': 'count'},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 11,
+    'stmt_id': 18,
+    'target': 'count',
+    'operand': '0'},
+    {'operation': 'forin_stmt',
+    'parent_stmt_id': 11,
+    'stmt_id': 19,
+    'name': '%v1',
+    'target': 'numbers',
+    'array_read': 20,
+    'body': 23},
+    {'operation': 'block_start', 'stmt_id': 20, 'parent_stmt_id': 19},
+    {'operation': 'target', 'parent_stmt_id': 20, 'stmt_id': 21},
+    {'operation': 'target', 'parent_stmt_id': 20, 'stmt_id': 22},
+    {'operation': 'block_end', 'stmt_id': 20, 'parent_stmt_id': 19},
+    {'operation': 'block_start', 'stmt_id': 23, 'parent_stmt_id': 19},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 23,
+    'stmt_id': 24,
+    'target': 'sum',
+    'operator': '+',
+    'operand': 'sum',
+    'operand2': 'num'},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 23,
+    'stmt_id': 25,
+    'target': 'count',
+    'operator': '+',
+    'operand': 'count',
+    'operand2': '1'},
+    {'operation': 'block_end', 'stmt_id': 23, 'parent_stmt_id': 19},
+    {'operation': 'field_read',
+    'parent_stmt_id': 11,
+    'stmt_id': 26,
+    'target': '%v2',
+    'receiver_object': 'fmt',
+    'field': 'Println'},
+    {'operation': 'call_stmt',
+    'parent_stmt_id': 11,
+    'stmt_id': 27,
+    'attr': None,
+    'target': '%v3',
+    'name': '%v2',
+    'type_parameters': None,
+    'args': '[\'"切片中所有元素的总和为:"\', \'sum\']'},
+    {'operation': 'block_end', 'stmt_id': 11, 'parent_stmt_id': 10},
+    {'operation': 'method_decl',
+    'parent_stmt_id': 0,
+    'stmt_id': 28,
+    'name': 'SimpleBreak',
+    'type_parameters': None,
+    'parameters': None,
+    'data_type': None,
+    'body': 29},
+    {'operation': 'block_start', 'stmt_id': 29, 'parent_stmt_id': 28},
+    {'operation': 'label_stmt',
+    'parent_stmt_id': 29,
+    'stmt_id': 30,
+    'name': 'outerLoop'},
+    {'operation': 'forin_stmt',
+    'parent_stmt_id': 29,
+    'stmt_id': 31,
+    'name': 'i',
+    'target': 'numbers',
+    'body': 32},
+    {'operation': 'block_start', 'stmt_id': 32, 'parent_stmt_id': 31},
+    {'operation': 'field_read',
+    'parent_stmt_id': 32,
+    'stmt_id': 33,
+    'target': '%v0',
+    'receiver_object': 'fmt',
+    'field': 'Printf'},
+    {'operation': 'call_stmt',
+    'parent_stmt_id': 32,
+    'stmt_id': 34,
+    'attr': None,
+    'target': '%v1',
+    'name': '%v0',
+    'type_parameters': None,
+    'args': '[\'"Outer loop: %d\\\\n"\', \'i\']'},
+    {'operation': 'if_stmt',
+    'parent_stmt_id': 32,
+    'stmt_id': 35,
+    'condition': 'gg',
+    'then_body': 36},
+    {'operation': 'block_start', 'stmt_id': 36, 'parent_stmt_id': 35},
+    {'operation': 'break_stmt', 'parent_stmt_id': 36, 'stmt_id': 37, 'target': ''},
+    {'operation': 'block_end', 'stmt_id': 36, 'parent_stmt_id': 35},
+    {'operation': 'forin_stmt',
+    'parent_stmt_id': 32,
+    'stmt_id': 38,
+    'name': 'j',
+    'target': 'numbers',
+    'body': 39},
+    {'operation': 'block_start', 'stmt_id': 39, 'parent_stmt_id': 38},
+    {'operation': 'field_read',
+    'parent_stmt_id': 39,
+    'stmt_id': 40,
+    'target': '%v0',
+    'receiver_object': 'fmt',
+    'field': 'Printf'},
+    {'operation': 'call_stmt',
+    'parent_stmt_id': 39,
+    'stmt_id': 41,
+    'attr': None,
+    'target': '%v1',
+    'name': '%v0',
+    'type_parameters': None,
+    'args': '[\'"Inner loop: %d\\\\n"\', \'j\']'},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 39,
+    'stmt_id': 42,
+    'target': '%v2',
+    'operator': '==',
+    'operand': 'j',
+    'operand2': '1'},
+    {'operation': 'if_stmt',
+    'parent_stmt_id': 39,
+    'stmt_id': 43,
+    'condition': '%v2',
+    'then_body': 44},
+    {'operation': 'block_start', 'stmt_id': 44, 'parent_stmt_id': 43},
+    {'operation': 'break_stmt',
+    'parent_stmt_id': 44,
+    'stmt_id': 45,
+    'target': 'outerLoop'},
+    {'operation': 'block_end', 'stmt_id': 44, 'parent_stmt_id': 43},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 39,
+    'stmt_id': 46,
+    'target': '%v3',
+    'operator': '>',
+    'operand': 'j',
+    'operand2': '6'},
+    {'operation': 'if_stmt',
+    'parent_stmt_id': 39,
+    'stmt_id': 47,
+    'condition': '%v3',
+    'then_body': 48},
+    {'operation': 'block_start', 'stmt_id': 48, 'parent_stmt_id': 47},
+    {'operation': 'break_stmt', 'parent_stmt_id': 48, 'stmt_id': 49, 'target': ''},
+    {'operation': 'continue_stmt',
+    'parent_stmt_id': 48,
+    'stmt_id': 50,
+    'target': ''},
+    {'operation': 'block_end', 'stmt_id': 48, 'parent_stmt_id': 47},
+    {'operation': 'block_end', 'stmt_id': 39, 'parent_stmt_id': 38},
+    {'operation': 'block_end', 'stmt_id': 32, 'parent_stmt_id': 31},
+    {'operation': 'assign_stmt',
+    'parent_stmt_id': 29,
+    'stmt_id': 51,
+    'target': '%v0',
+    'operator': '+',
+    'operand': 'eex',
+    'operand2': '1'},
+    {'operation': 'block_end', 'stmt_id': 29, 'parent_stmt_id': 28},
+    {'operation': 'method_decl',
+    'parent_stmt_id': 0,
+    'stmt_id': 52,
+    'name': 'Emp',
+    'type_parameters': None,
+    'parameters': None,
+    'data_type': None,
+    'body': 53},
+    {'operation': 'block_start', 'stmt_id': 53, 'parent_stmt_id': 52},
+    {'operation': 'forin_stmt',
+    'parent_stmt_id': 53,
+    'stmt_id': 54,
+    'name': '%v0',
+    'target': 'numbers',
+    'array_read': None,
+    'body': None},
+    {'operation': 'block_end', 'stmt_id': 53, 'parent_stmt_id': 52},
+    {'operation': 'method_decl',
+    'parent_stmt_id': 0,
+    'stmt_id': 55,
+    'name': 'EmpBreak',
+    'type_parameters': None,
+    'parameters': None,
+    'data_type': None,
+    'body': 56},
+    {'operation': 'block_start', 'stmt_id': 56, 'parent_stmt_id': 55},
+    {'operation': 'forin_stmt',
+    'parent_stmt_id': 56,
+    'stmt_id': 57,
+    'name': '%v0',
+    'target': 'numbers',
+    'array_read': None,
+    'body': 58},
+    {'operation': 'block_start', 'stmt_id': 58, 'parent_stmt_id': 57},
+    {'operation': 'break_stmt', 'parent_stmt_id': 58, 'stmt_id': 59, 'target': ''},
+    {'operation': 'block_end', 'stmt_id': 58, 'parent_stmt_id': 57},
+    {'operation': 'block_end', 'stmt_id': 56, 'parent_stmt_id': 55}]
+    [DEBUG]: analysis_phase name: control_flow index:0
+    [DEBUG]: _add_one_edge:12->13, weight=None
+    [DEBUG]: _add_one_edge:13->14, weight=None
+    [DEBUG]: _add_one_edge:14->15, weight=None
+    [DEBUG]: _add_one_edge:15->16, weight=None
+    [DEBUG]: _add_one_edge:16->17, weight=None
+    [DEBUG]: _add_one_edge:17->18, weight=None
+    [DEBUG]: _add_one_edge:18->21, weight=None
+    [DEBUG]: _add_one_edge:21->22, weight=None
+    [DEBUG]: _add_one_edge:22->19, weight=3
+    [DEBUG]: _add_one_edge:19->24, weight=4
+    [DEBUG]: _add_one_edge:24->25, weight=None
+    [DEBUG]: _add_one_edge:25->19, weight=3
+    [DEBUG]: _add_one_edge:19->26, weight=5
+    [DEBUG]: _add_one_edge:26->27, weight=None
+    [DEBUG]: _add_one_edge:27->-1, weight=None
+    [DEBUG]: analysis_phase name: control_flow index:0
+    [DEBUG]: _add_one_edge:30->31, weight=3
+    [DEBUG]: _add_one_edge:31->33, weight=4
+    [DEBUG]: _add_one_edge:33->34, weight=None
+    [DEBUG]: _add_one_edge:34->35, weight=None
+    [DEBUG]: _add_one_edge:35->37, weight=1
+    [DEBUG]: _add_one_edge:35->38, weight=2
+    [DEBUG]: _add_one_edge:38->40, weight=4
+    [DEBUG]: _add_one_edge:40->41, weight=None
+    [DEBUG]: _add_one_edge:41->42, weight=None
+    [DEBUG]: _add_one_edge:42->43, weight=None
+    [DEBUG]: _add_one_edge:43->45, weight=1
+    [DEBUG]: _add_one_edge:43->46, weight=2
+    [DEBUG]: _add_one_edge:46->47, weight=None
+    [DEBUG]: _add_one_edge:47->49, weight=1
+    [DEBUG]: _add_one_edge:47->38, weight=2
+    [DEBUG]: _add_one_edge:38->31, weight=5
+    [DEBUG]: _add_one_edge:49->31, weight=6
+    [DEBUG]: _add_one_edge:31->51, weight=5
+    [DEBUG]: _add_one_edge:37->51, weight=6
+    [DEBUG]: _add_one_edge:45->51, weight=6
+    [DEBUG]: _add_one_edge:51->-1, weight=None
+    [DEBUG]: analysis_phase name: control_flow index:0
+    [DEBUG]: _add_one_edge:54->54, weight=4
+    [DEBUG]: _add_one_edge:54->-1, weight=5
+    [DEBUG]: analysis_phase name: control_flow index:0
+    [DEBUG]: _add_one_edge:57->59, weight=4
+    [DEBUG]: _add_one_edge:57->-1, weight=5
+    [DEBUG]: _add_one_edge:59->-1, weight=6
+    === target file ===
+    /app/experiment_3/tests/resource/control_flow/go/forin.go
+    + reference answer
+    [(12, 13, 0),
+    (13, 14, 0),
+    (14, 15, 0),
+    (15, 16, 0),
+    (16, 17, 0),
+    (17, 18, 0),
+    (18, 21, 0),
+    (19, 24, 4),
+    (19, 26, 5),
+    (21, 22, 0),
+    (22, 19, 3),
+    (24, 25, 0),
+    (25, 19, 3),
+    (26, 27, 0),
+    (27, -1, 0),
+    (30, 31, 3),
+    (31, 33, 4),
+    (31, 51, 5),
+    (33, 34, 0),
+    (34, 35, 0),
+    (35, 37, 1),
+    (35, 38, 2),
+    (37, 51, 6),
+    (38, 31, 5),
+    (38, 40, 4),
+    (40, 41, 0),
+    (41, 42, 0),
+    (42, 43, 0),
+    (43, 45, 1),
+    (43, 46, 2),
+    (45, 51, 6),
+    (46, 47, 0),
+    (47, 38, 2),
+    (47, 49, 1),
+    (49, 31, 6),
+    (51, -1, 0),
+    (54, -1, 5),
+    (54, 54, 4),
+    (57, -1, 5),
+    (57, 59, 4),
+    (59, -1, 6)]
+    + current result
+    [(12, 13, 0),
+    (13, 14, 0),
+    (14, 15, 0),
+    (15, 16, 0),
+    (16, 17, 0),
+    (17, 18, 0),
+    (18, 21, 0),
+    (19, 24, 4),
+    (19, 26, 5),
+    (21, 22, 0),
+    (22, 19, 3),
+    (24, 25, 0),
+    (25, 19, 3),
+    (26, 27, 0),
+    (27, -1, 0),
+    (30, 31, 3),
+    (31, 33, 4),
+    (31, 51, 5),
+    (33, 34, 0),
+    (34, 35, 0),
+    (35, 37, 1),
+    (35, 38, 2),
+    (37, 51, 6),
+    (38, 31, 5),
+    (38, 40, 4),
+    (40, 41, 0),
+    (41, 42, 0),
+    (42, 43, 0),
+    (43, 45, 1),
+    (43, 46, 2),
+    (45, 51, 6),
+    (46, 47, 0),
+    (47, 38, 2),
+    (47, 49, 1),
+    (49, 31, 6),
+    (51, -1, 0),
+    (54, -1, 5),
+    (54, 54, 4),
+    (57, -1, 5),
+    (57, 59, 4),
+    (59, -1, 6)]
+    ```
