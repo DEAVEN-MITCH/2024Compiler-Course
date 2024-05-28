@@ -4,6 +4,8 @@
   stmt_handlers中`analyze_break_stmt`,`analyze_continue_stmt`,`analyze_label_stmt`,以及`analyze_for_stmt`的重写（改变原来不对的地方，并增加break\[label\]、continue\[label\]的处理）,编写continue.go、break.go测试用例来测试以上完成内容，修改test_cfg使得测试程序能测试以上用例。
 - 宋岱桉：
     stmt_handlers中`analyze_for_stmt`基础版的书写以及`analyze_forin_stmt`（包含break\[label\]、continue\[label\]的处理）,编写for.go、forin.go测试用例来测试以上完成内容，修改test_cfg使得测试程序能测试以上用例。
+- 郑仁哲：
+    stmt_handers中`method_decl`和`return`的书写，添加`goto_stmt`的语句分析函数，编写return.go,method_decl.go,goto.go的测试用例，更新对应test_cfg使得测试程序运行。   
 ## 实验思路及核心代码
 1. 张佳和部分：
     1. `analyze_break_stmt`,`analyze_continue_stmt`原本打算直接处理，后来发现很难确定Label的下一句，改为将这两个加到global_special中，由for_stmt或forin_stmt来处理。返回[],-1是因为后面的代码执行不到（经讨论，忽略label+被goto的情况）代码如下：
@@ -283,6 +285,80 @@
             boundary=current_stmt._index
         return (previous,boundary)
         ```
+3. 郑仁哲部分：
+    1. `analyze_return_stmt`部分，首先，函数通过 link_parent_stmts_to_current_stmt 方法将 return 语句与其父语句连接起来，确保控制流的连续性。随后，通过调用 get_return_value 方法获取 return 语句可能存在的返回值。如果存在返回值，函数将调用 analyze_expression 方法来分析这个返回值表达式，确保任何与返回值相关的依赖或操作都被考虑。此外，函数在控制流图中添加一条特殊的结束边，将 return 语句连接到方法的逻辑结束节点，这通常表示方法的结束。这个结束节点是用一个特殊的 CFG 节点表示的，这里假设为 exit_node。为了支持外部分析，return 语句还会被添加到全局的特殊语句列表 global_special_stmts 中。最后，由于 return 语句表示方法的退出点，函数返回一个空列表和结束标记，表示没有后续的执行路径。这样的处理确保了 return 语句在控制流图中正确表示，同时也支持对方法退出逻辑的精确分析。
+       ```python
+        def analyze_return_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        # 链接父节点到当前的 return 语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        # 处理 return 语句可能携带的返回值
+        return_value = current_stmt.get_return_value()  # 假设 get_return_value 方法能获取 return 语句的返回值信息
+        if return_value is not None:
+            # 分析返回值表达式
+            self.analyze_expression(return_value, current_stmt, global_special_stmts)
+        # 在 CFG 中添加一个特殊的结束边，将当前 return 语句链接到方法的逻辑结束节点 
+        exit_node = CFGNode(-1, ControlFlowKind.NORMAL_EXIT)  # 假设 -1 是方法结束的标准标记
+        self.cfg.add_edge(current_stmt, exit_node, ControlFlowKind.NORMAL_EXIT)
+        # 将 return 语句添加到 global_special_stmts 以支持外部分析
+        global_special_stmts.append(current_stmt)
+        # Return 语句执行后不应再有其他执行语句，返回一个空列表和结束标记
+        return ([], -1)
+       ```
+    2. `analyze_method_decl_stmt`部分：首先，该函数通过 link_parent_stmts_to_current_stmt 方法将当前方法声明与其父语句连接起来，以保持执行流的完整性。接着，它将当前的方法声明添加到全局特殊语句列表 global_special_stmts 中，这一步骤对于处理方法内部的跳转语句尤为关键。随后，函数尝试读取并分析方法体内的所有语句。这包括对方法体的逐个语句调用 analyze_block 函数进行深入分析，以构建方法内部的详细控制流图。分析完方法体后，该函数还处理方法结束后的跳转和标签，确保例如 return 或 goto 语句能正确链接到方法声明的控制流中。最终，它会生成一个包含方法体最后语句的列表和方法体之后第一个语句的索引，并将这些信息返回，以供进一步的调用和处理。
+    ```python 
+   def analyze_method_decl_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        # 链接父语句到当前方法声明语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        # 添加当前方法声明到特殊全局语句列表，用于处理内部跳转
+        global_special_stmts.append(current_stmt)
+        # 方法体的开始点
+        method_body_id = current_stmt.body
+        method_body = self.read_block(current_block, method_body_id) if not util.isna(method_body_id) else []
+        # 初始化方法体内最后的语句列表
+        last_stmts_of_method_body = [CFGNode(current_stmt, ControlFlowKind.METHOD_ENTRY)]
+        # 分析方法体内的所有语句
+        if method_body:
+            last_stmts_of_method_body = self.analyze_block(method_body, last_stmts_of_method_body, global_special_stmts)
+        # 处理方法结束后的跳转和标签
+        if last_stmts_of_method_body:
+            for stmt in last_stmts_of_method_body:
+                if isinstance(stmt, CFGNode) and stmt.stmt.operation == "return_stmt":
+                    self.cfg.add_edge(stmt.stmt, current_stmt, ControlFlowKind.NORMAL_EXIT)
+                elif isinstance(stmt, CFGNode) and stmt.stmt.operation == "goto_stmt":
+                    if stmt.stmt.target == current_stmt.name:  # 如果goto指向方法的开头
+                        self.cfg.add_edge(stmt.stmt, current_stmt, stmt.edge)
+        # 方法结束节点，这里认为是方法体之后的第一个语句
+        next_index = current_stmt._index + 1
+        next_stmt = current_block.access(next_index) if next_index < len(current_block) else None
+        newBind = specialBind(current_stmt, next_stmt)
+        global_special_stmts.append(newBind)
+        # 返回方法体最后的语句和新的索引，以及连接新的绑定
+        return (last_stmts_of_method_body, next_index - 1)
+    ```
+    3. `analyze_goto_stmt`部分，首先，函数通过 link_parent_stmts_to_current_stmt 方法将 goto 语句与其父语句连接起来，以保持控制流的连续性。然后，函数检查全局的特殊语句列表 global_special_stmts 中是否已经存在一个与 goto 语句的目标标签匹配的标签声明。如果找到这样的标签，函数将在控制流图中添加一条边，从 goto 语句指向该标签，表示控制流的跳转。如果在 global_special_stmts 中未找到匹配的标签，这意味着标签可能在后续的代码中定义，因此将 goto 语句添加到 global_special_stmts 中，以便未来处理。这样的处理确保了在当前分析阶段未能解析的 goto 语句可以在后续遇到对应标签时得到正确处理。由于 goto 语句会导致程序跳转到其他位置，函数返回一个空列表和当前 goto 语句的索引。这表示在 goto 语句之后的代码块不应继续执行，因此代码块的分析应该在此处停止。这种处理方式确保 goto 语句在控制流图中的影响被正确表达，并且后续代码的执行逻辑与 goto 的跳转行为一致。
+   ```python
+   def analyze_goto_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        # 连接当前 goto 语句与其父语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+
+        # 检查 global_special_stmts 中是否已经存在与 goto 目标相匹配的标签
+        target_label = current_stmt.target  # 假设 current_stmt.target 存储了 goto 语句的目标标签名称
+        label_found = False
+        for stmt in global_special_stmts:
+            if isinstance(stmt, specialBind) and stmt.match(target_label):
+                # 如果找到匹配的标签，添加边从 goto 到标签
+                self.cfg.add_edge(current_stmt, stmt.stmt, ControlFlowKind.GOTO)
+                label_found = True
+                break
+
+        if not label_found:
+            # 如果没有找到标签，将 goto 语句添加到 global_special_stmts 中等待未来处理
+            global_special_stmts.append(current_stmt)
+
+        # goto 语句执行后，控制流将跳转到标签，因此后续语句不会执行
+        # 返回空列表和当前语句的索引，表明代码块分析应在此处终止
+        return ([], current_stmt._index)
+   ```
 ## 测试用例与结果
 1. 张佳和部分
     1. break.go
@@ -1719,3 +1795,1058 @@
     (57, 59, 4),
     (59, -1, 6)]
     ```
+3. 郑仁哲部分
+    1. return.go
+    ```go
+   
+    func SimpleReturn() {
+    fmt.Println("Executing SimpleReturn")
+    return
+   }
+
+    func ReturnValue() int {
+    return 42
+   }
+
+
+   func ReturnVariable() string {
+    message := "Hello, world!"
+    return message
+   }
+   func ReturnExpression(a, b int) int {
+    result := a + b
+    return result
+   }
+     func ReturnMultipleValues() (int, string) {
+     return 10, "ten"
+     }
+
+
+    func ReturnWithError(value int) (int, error) {
+    if value < 0 {
+        return 0, errors.New("negative value provided")
+    }
+    return value, nil
+    }
+
+
+    func ReturnFromIf(value int) string {
+    if value > 0 {
+        return "positive"
+    } else {
+        return "non-positive"
+    }
+    }
+
+    func ReturnFromLoop(numbers []int, target int) bool {
+    for _, number := range numbers {
+        if number == target {
+            return true
+        }
+    }
+    return false
+    }
+    ```
+    2.goto.go
+   ```go
+   func main() {
+    fmt.Println("Start")
+    goto Skip
+    fmt.Println("This will not be printed")
+   Skip:
+    fmt.Println("Skipped to here")
+
+    for i := 0; i < 5; i++ {
+        if i == 2 {
+            goto Found
+        }
+    }
+    fmt.Println("Not found")
+   Found:
+    fmt.Println("Found at 2")
+
+    if true {
+        goto InsideIf
+    } else {
+        fmt.Println("In the else block")
+    }
+   InsideIf:
+    fmt.Println("Inside if block")
+
+   }
+   ```
+   3.method_decl.go
+   ```go
+   type Calculator struct{}
+
+   func (c Calculator) Clear() {
+    fmt.Println("Calculator cleared")
+   }
+
+   type Rectangle struct {
+    width, height float64
+   }
+
+   func (r Rectangle) Area() float64 {
+    return r.width * r.height
+   }
+
+   ```
+2.测试结果依次为：
+（1）                  'type_parameters': [],
+                  'parameters': [],
+                  'data_type': [],
+                  'body': [{'field_read': {'target': '%v0',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v1',
+                                          'name': '%v0',
+                                          'type_parameters': [],
+                                          'args': ['"Executing '
+                                                   'SimpleReturn"']}},
+                           {'return': {'target': ''}}]}},
+ {'method_decl': {'name': 'ReturnValue',
+                  'type_parameters': [],
+                  'parameters': [],
+                  'data_type': 'int',
+                  'body': [{'return': {'target': '42'}}]}},
+ {'method_decl': {'name': 'ReturnVariable',
+                  'type_parameters': [],
+                  'parameters': [],
+                  'data_type': 'string',
+                  'body': [{'variable_decl': {'attr': 'short_var',
+                                              'data_type': '',
+                                              'name': 'message'}},
+                           {'assign_stmt': {'target': 'message',
+                                            'operand': '"'}},
+                           {'return': {'target': 'message'}}]}},
+ {'method_decl': {'name': 'ReturnExpression',
+                  'type_parameters': [],
+                  'parameters': [[{'parameter_decl': {'name': 'a',
+                                                      'data_type': 'int'}},
+                                  {'parameter_decl': {'name': 'b',
+                                                      'data_type': 'int'}}]],
+                  'data_type': 'int',
+                  'body': [{'assign_stmt': {'target': '%v0',
+                                            'operator': '+',
+                                            'operand': 'a',
+                                            'operand2': 'b'}},
+                           {'variable_decl': {'attr': 'short_var',
+                                              'data_type': '',
+                                              'name': 'result'}},
+                           {'assign_stmt': {'target': 'result',
+                                            'operand': '%'}},
+                           {'return': {'target': 'result'}}]}},
+ {'method_decl': {'name': 'ReturnMultipleValues',
+                  'type_parameters': [],
+                  'parameters': [],
+                  'data_type': [[{'parameter_decl': {'data_type': 'int'}},
+                                 {'parameter_decl': {'data_type': 'string'}}]],
+                  'body': [{'return': {'target': ['10', '"ten"']}}]}},
+ {'method_decl': {'name': 'ReturnWithError',
+                  'type_parameters': [],
+                  'parameters': [[{'parameter_decl': {'name': 'value',
+                                                      'data_type': 'int'}}]],
+                  'data_type': [[{'parameter_decl': {'data_type': 'int'}},
+                                 {'parameter_decl': {'data_type': 'error'}}]],
+                  'body': [{'assign_stmt': {'target': '%v0',
+                                            'operator': '<',
+                                            'operand': 'value',
+                                            'operand2': '0'}},
+                           {'if_stmt': {'condition': '%v0',
+                                        'then_body': [{'field_read': {'target': '%v0',    
+                                                                      'receiver_object': 'errors',
+                                                                      'field': 'New'}},   
+                                                      {'call_stmt': {'attr': [],
+                                                                     'target': '%v1',     
+                                                                     'name': '%v0',       
+                                                                     'type_parameters': [],
+                                                                     'args': ['"negative '
+                                                                              'value '    
+                                                                              'provided"']}},
+                                                      {'return': {'target': ['0',
+                                                                             '%v1']}}]}}, 
+                           {'return': {'target': ['value', 'nil']}}]}},
+ {'method_decl': {'name': 'ReturnFromIf',
+                  'type_parameters': [],
+                  'parameters': [[{'parameter_decl': {'name': 'value',
+                                                      'data_type': 'int'}}]],
+                  'data_type': 'string',
+                  'body': [{'assign_stmt': {'target': '%v0',
+                                            'operator': '>',
+                                            'operand': 'value',
+                                            'operand2': '0'}},
+                           {'if_stmt': {'condition': '%v0',
+                                        'then_body': [{'return': {'target': '"positive"'}}],
+                                        'else_body': [{'return': {'target': '"non-positive"'}}]}}]}},
+ {'method_decl': {'name': 'ReturnFromLoop',
+                  'type_parameters': [],
+                  'parameters': [[{'parameter_decl': {'name': 'numbers',
+                                                      'data_type': ['slice_type',
+                                                                    {'element': 'int'}]}},
+                                  {'parameter_decl': {'name': 'target',
+                                                      'data_type': 'int'}}]],
+                  'data_type': 'bool',
+                  'body': [{'forin_stmt': {'name': '%v0',
+                                           'target': 'numbers',
+                                           'array_read': [{'target': '_',
+                                                           'array': '%v0',
+                                                           'index': 0},
+                                                          {'target': 'number',
+                                                           'array': '%v0',
+                                                           'index': 1}],
+                                           'body': [{'assign_stmt': {'target': '%v0',     
+                                                                     'operator': '==',    
+                                                                     'operand': 'number', 
+                                                                     'operand2': 'target'}},
+                                                    {'if_stmt': {'condition': '%v0',      
+                                                                 'then_body': [{'return': {'target': 'true'}}]}}]}},
+                           {'return': {'target': 'false'}}]}}]
+[{'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 10,
+  'name': 'SimpleReturn',
+  'type_parameters': None,
+  'parameters': None,
+  'data_type': None,
+  'body': 11},
+ {'operation': 'block_start', 'stmt_id': 11, 'parent_stmt_id': 10},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 12,
+  'target': '%v0',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 13,
+  'attr': None,
+  'target': '%v1',
+  'name': '%v0',
+  'type_parameters': None,
+  'args': '[\'"Executing SimpleReturn"\']'},
+ {'operation': 'return', 'parent_stmt_id': 11, 'stmt_id': 14, 'target': ''},
+ {'operation': 'block_end', 'stmt_id': 11, 'parent_stmt_id': 10},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 15,
+  'name': 'ReturnValue',
+  'type_parameters': None,
+  'parameters': None,
+  'data_type': 'int',
+  'body': 16},
+ {'operation': 'block_start', 'stmt_id': 16, 'parent_stmt_id': 15},
+ {'operation': 'return', 'parent_stmt_id': 16, 'stmt_id': 17, 'target': '42'},
+ {'operation': 'block_end', 'stmt_id': 16, 'parent_stmt_id': 15},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 18,
+  'name': 'ReturnVariable',
+  'type_parameters': None,
+  'parameters': None,
+  'data_type': 'string',
+  'body': 19},
+ {'operation': 'block_start', 'stmt_id': 19, 'parent_stmt_id': 18},
+ {'operation': 'variable_decl',
+  'parent_stmt_id': 19,
+  'stmt_id': 20,
+  'attr': 'short_var',
+  'data_type': '',
+  'name': 'message'},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 19,
+  'stmt_id': 21,
+  'target': 'message',
+  'operand': '"'},
+ {'operation': 'return',
+  'parent_stmt_id': 19,
+  'stmt_id': 22,
+  'target': 'message'},
+ {'operation': 'block_end', 'stmt_id': 19, 'parent_stmt_id': 18},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 23,
+  'name': 'ReturnExpression',
+  'type_parameters': None,
+  'parameters': "[[{'parameter_decl': {'name': 'a', 'data_type': 'int'}}, "
+                "{'parameter_decl': {'name': 'b', 'data_type': 'int'}}]]",
+  'data_type': 'int',
+  'body': 24},
+ {'operation': 'block_start', 'stmt_id': 24, 'parent_stmt_id': 23},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 24,
+  'stmt_id': 25,
+  'target': '%v0',
+  'operator': '+',
+  'operand': 'a',
+  'operand2': 'b'},
+ {'operation': 'variable_decl',
+  'parent_stmt_id': 24,
+  'stmt_id': 26,
+  'attr': 'short_var',
+  'data_type': '',
+  'name': 'result'},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 24,
+  'stmt_id': 27,
+  'target': 'result',
+  'operand': '%'},
+ {'operation': 'return',
+  'parent_stmt_id': 24,
+  'stmt_id': 28,
+  'target': 'result'},
+ {'operation': 'block_end', 'stmt_id': 24, 'parent_stmt_id': 23},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 29,
+  'name': 'ReturnMultipleValues',
+  'type_parameters': None,
+  'parameters': None,
+  'data_type': "[[{'parameter_decl': {'data_type': 'int'}}, {'parameter_decl': "
+               "{'data_type': 'string'}}]]",
+  'body': 30},
+ {'operation': 'block_start', 'stmt_id': 30, 'parent_stmt_id': 29},
+ {'operation': 'return',
+  'parent_stmt_id': 30,
+  'stmt_id': 31,
+  'target': '[\'10\', \'"ten"\']'},
+ {'operation': 'block_end', 'stmt_id': 30, 'parent_stmt_id': 29},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 32,
+  'name': 'ReturnWithError',
+  'type_parameters': None,
+  'parameters': "[[{'parameter_decl': {'name': 'value', 'data_type': 'int'}}]]",
+  'data_type': "[[{'parameter_decl': {'data_type': 'int'}}, {'parameter_decl': "
+               "{'data_type': 'error'}}]]",
+  'body': 33},
+ {'operation': 'block_start', 'stmt_id': 33, 'parent_stmt_id': 32},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 33,
+  'stmt_id': 34,
+  'target': '%v0',
+  'operator': '<',
+  'operand': 'value',
+  'operand2': '0'},
+ {'operation': 'if_stmt',
+  'parent_stmt_id': 33,
+  'stmt_id': 35,
+  'condition': '%v0',
+  'then_body': 36},
+ {'operation': 'block_start', 'stmt_id': 36, 'parent_stmt_id': 35},
+ {'operation': 'field_read',
+  'parent_stmt_id': 36,
+  'stmt_id': 37,
+  'target': '%v0',
+  'receiver_object': 'errors',
+  'field': 'New'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 36,
+  'stmt_id': 38,
+  'attr': None,
+  'target': '%v1',
+  'name': '%v0',
+  'type_parameters': None,
+  'args': '[\'"negative value provided"\']'},
+ {'operation': 'return',
+  'parent_stmt_id': 36,
+  'stmt_id': 39,
+  'target': "['0', '%v1']"},
+ {'operation': 'block_end', 'stmt_id': 36, 'parent_stmt_id': 35},
+ {'operation': 'return',
+  'parent_stmt_id': 33,
+  'stmt_id': 40,
+  'target': "['value', 'nil']"},
+ {'operation': 'block_end', 'stmt_id': 33, 'parent_stmt_id': 32},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 41,
+  'name': 'ReturnFromIf',
+  'type_parameters': None,
+  'parameters': "[[{'parameter_decl': {'name': 'value', 'data_type': 'int'}}]]",
+  'data_type': 'string',
+  'body': 42},
+ {'operation': 'block_start', 'stmt_id': 42, 'parent_stmt_id': 41},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 42,
+  'stmt_id': 43,
+  'target': '%v0',
+  'operator': '>',
+  'operand': 'value',
+  'operand2': '0'},
+ {'operation': 'if_stmt',
+  'parent_stmt_id': 42,
+  'stmt_id': 44,
+  'condition': '%v0',
+  'then_body': 45,
+  'else_body': 47},
+ {'operation': 'block_start', 'stmt_id': 45, 'parent_stmt_id': 44},
+ {'operation': 'return',
+  'parent_stmt_id': 45,
+  'stmt_id': 46,
+  'target': '"positive"'},
+ {'operation': 'block_end', 'stmt_id': 45, 'parent_stmt_id': 44},
+ {'operation': 'block_start', 'stmt_id': 47, 'parent_stmt_id': 44},
+ {'operation': 'return',
+  'parent_stmt_id': 47,
+  'stmt_id': 48,
+  'target': '"non-positive"'},
+ {'operation': 'block_end', 'stmt_id': 47, 'parent_stmt_id': 44},
+ {'operation': 'block_end', 'stmt_id': 42, 'parent_stmt_id': 41},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 49,
+  'name': 'ReturnFromLoop',
+  'type_parameters': None,
+  'parameters': "[[{'parameter_decl': {'name': 'numbers', 'data_type': "
+                "['slice_type', {'element': 'int'}]}}, {'parameter_decl': "
+                "{'name': 'target', 'data_type': 'int'}}]]",
+  'data_type': 'bool',
+  'body': 50},
+ {'operation': 'block_start', 'stmt_id': 50, 'parent_stmt_id': 49},
+ {'operation': 'forin_stmt',
+  'parent_stmt_id': 50,
+  'stmt_id': 51,
+  'name': '%v0',
+  'target': 'numbers',
+  'array_read': 52,
+  'body': 55},
+ {'operation': 'block_start', 'stmt_id': 52, 'parent_stmt_id': 51},
+ {'operation': 'target', 'parent_stmt_id': 52, 'stmt_id': 53},
+ {'operation': 'target', 'parent_stmt_id': 52, 'stmt_id': 54},
+ {'operation': 'block_end', 'stmt_id': 52, 'parent_stmt_id': 51},
+ {'operation': 'block_start', 'stmt_id': 55, 'parent_stmt_id': 51},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 55,
+  'stmt_id': 56,
+  'target': '%v0',
+  'operator': '==',
+  'operand': 'number',
+  'operand2': 'target'},
+ {'operation': 'if_stmt',
+  'parent_stmt_id': 55,
+  'stmt_id': 57,
+  'condition': '%v0',
+  'then_body': 58},
+ {'operation': 'block_start', 'stmt_id': 58, 'parent_stmt_id': 57},
+ {'operation': 'return', 'parent_stmt_id': 58, 'stmt_id': 59, 'target': 'true'},
+ {'operation': 'block_end', 'stmt_id': 58, 'parent_stmt_id': 57},
+ {'operation': 'block_end', 'stmt_id': 55, 'parent_stmt_id': 51},
+ {'operation': 'return',
+  'parent_stmt_id': 50,
+  'stmt_id': 60,
+  'target': 'false'},
+ {'operation': 'block_end', 'stmt_id': 50, 'parent_stmt_id': 49}]
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:12->13, weight=None
+[DEBUG]: _add_one_edge:13->14, weight=None
+[DEBUG]: _add_one_edge:14->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:17->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:20->21, weight=None
+[DEBUG]: _add_one_edge:21->22, weight=None
+[DEBUG]: _add_one_edge:22->-1, weight=None
+/app/experiment_3/src/lian/util/dataframe_operation.py:271: FutureWarning: elementwise comparison failed; returning scalar instead, but in the future will perform elementwise comparison
+  query = (self.stmt_id.values == block_id)
+<__array_function__ internals>:200: DeprecationWarning: Calling nonzero on 0d arrays is deprecated, as it behaves surprisingly. Use `atleast_1d(cond).nonzero()` if the old behavior was intended. If the context of this warning is of the form `arr[nonzero(cond)]`, just use `arr[cond]`.
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:25->26, weight=None
+[DEBUG]: _add_one_edge:26->27, weight=None
+[DEBUG]: _add_one_edge:27->28, weight=None
+[DEBUG]: _add_one_edge:28->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:31->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:34->35, weight=None
+[DEBUG]: _add_one_edge:35->37, weight=1
+[DEBUG]: _add_one_edge:37->38, weight=None
+[DEBUG]: _add_one_edge:38->39, weight=None
+[DEBUG]: _add_one_edge:39->40, weight=None
+[DEBUG]: _add_one_edge:35->40, weight=2
+[DEBUG]: _add_one_edge:40->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:43->44, weight=None
+[DEBUG]: _add_one_edge:44->46, weight=1
+[DEBUG]: _add_one_edge:44->48, weight=2
+[DEBUG]: _add_one_edge:46->-1, weight=None
+[DEBUG]: _add_one_edge:48->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:53->54, weight=None
+[DEBUG]: _add_one_edge:54->51, weight=3
+[DEBUG]: _add_one_edge:51->56, weight=4
+[DEBUG]: _add_one_edge:56->57, weight=None
+[DEBUG]: _add_one_edge:57->59, weight=1
+[DEBUG]: _add_one_edge:59->51, weight=3
+[DEBUG]: _add_one_edge:57->51, weight=2
+[DEBUG]: _add_one_edge:51->60, weight=5
+[DEBUG]: _add_one_edge:60->-1, weight=None
+=== target file ===
+/app/experiment_3/tests/resource/control_flow/go/return.go
++ reference answer
+[(12, 13, 0),
+ (13, 14, 0),
+ (14, -1, 0),
+ (17, -1, 0),
+ (20, 21, 0),
+ (21, 22, 0),
+ (22, -1, 0),
+ (25, 26, 0),
+ (26, 27, 0),
+ (27, 28, 0),
+ (28, -1, 0),
+ (31, -1, 0),
+ (34, 35, 0),
+ (35, 37, 1),
+ (35, 40, 2),
+ (37, 38, 0),
+ (38, 39, 0),
+ (39, 40, 0),
+ (40, -1, 0),
+ (43, 44, 0),
+ (44, 46, 1),
+ (44, 48, 2),
+ (46, -1, 0),
+ (48, -1, 0),
+ (51, 56, 4),
+ (51, 60, 5),
+ (53, 54, 0),
+ (54, 51, 3),
+ (56, 57, 0),
+ (57, 51, 2),
+ (57, 59, 1),
+ (59, 51, 3),
+ (60, -1, 0)]
++ current result
+[(12, 13, 0),
+ (13, 14, 0),
+ (14, -1, 0),
+ (17, -1, 0),
+ (20, 21, 0),
+ (21, 22, 0),
+ (22, -1, 0),
+ (25, 26, 0),
+ (26, 27, 0),
+ (27, 28, 0),
+ (28, -1, 0),
+ (31, -1, 0),
+ (34, 35, 0),
+ (35, 37, 1),
+ (35, 40, 2),
+ (37, 38, 0),
+ (38, 39, 0),
+ (39, 40, 0),
+ (40, -1, 0),
+ (43, 44, 0),
+ (44, 46, 1),
+ (44, 48, 2),
+ (46, -1, 0),
+ (48, -1, 0),
+ (51, 56, 4),
+ (51, 60, 5),
+ (53, 54, 0),
+ (54, 51, 3),
+ (56, 57, 0),
+ (57, 51, 2),
+ (57, 59, 1),
+ (59, 51, 3),
+ (60, -1, 0)]
+（2）  [{'method_decl': {'name': 'main',
+                  'type_parameters': [],
+                  'parameters': [],
+                  'data_type': [],
+                  'body': [{'field_read': {'target': '%v0',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v1',
+                                          'name': '%v0',
+                                          'type_parameters': [],
+                                          'args': ['"Start"']}},
+                           {'goto_stmt': {'target': 'Skip'}},
+                           {'field_read': {'target': '%v2',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v3',
+                                          'name': '%v2',
+                                          'type_parameters': [],
+                                          'args': ['"This will not be '
+                                                   'printed"']}},
+                           {'label_stmt': {'name': 'Skip'}},
+                           {'field_read': {'target': '%v4',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v5',
+                                          'name': '%v4',
+                                          'type_parameters': [],
+                                          'args': ['"Skipped to here"']}},
+                           {'for_stmt': {'init_body': [{'variable_decl': {'attr': 'short_var',
+                                                                          'data_type': '',
+                                                                          'name': 'i'}},  
+                                                       {'assign_stmt': {'target': 'i',    
+                                                                        'operand': '0'}}],
+                                         'condition': '%v0',
+                                         'condition_prebody': [{'assign_stmt': {'target': '%v0',
+                                                                                'operator': '<',
+                                                                                'operand': 'i',
+                                                                                'operand2': '5'}}],
+                                         'update_body': [{'inc_stmt': {'target': 'i'}}],  
+                                         'body': [{'assign_stmt': {'target': '%v0',       
+                                                                   'operator': '==',      
+                                                                   'operand': 'i',        
+                                                                   'operand2': '2'}},     
+                                                  {'if_stmt': {'condition': '%v0',        
+                                                               'then_body': [{'goto_stmt': {'target': 'Found'}}]}}]}},
+                           {'field_read': {'target': '%v6',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v7',
+                                          'name': '%v6',
+                                          'type_parameters': [],
+                                          'args': ['"Not found"']}},
+                           {'label_stmt': {'name': 'Found'}},
+                           {'field_read': {'target': '%v8',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v9',
+                                          'name': '%v8',
+                                          'type_parameters': [],
+                                          'args': ['"Found at 2"']}},
+                           {'if_stmt': {'condition': 'true',
+                                        'then_body': [{'goto_stmt': {'target': 'InsideIf'}}],
+                                        'else_body': [{'field_read': {'target': '%v0',    
+                                                                      'receiver_object': 'fmt',
+                                                                      'field': 'Println'}},
+                                                      {'call_stmt': {'attr': [],
+                                                                     'target': '%v1',     
+                                                                     'name': '%v0',       
+                                                                     'type_parameters': [],
+                                                                     'args': ['"In '      
+                                                                              'the '      
+                                                                              'else '     
+                                                                              'block"']}}]}},
+                           {'label_stmt': {'name': 'InsideIf'}},
+                           {'field_read': {'target': '%v10',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v11',
+                                          'name': '%v10',
+                                          'type_parameters': [],
+                                          'args': ['"Inside if block"']}}]}}]
+[{'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 10,
+  'name': 'main',
+  'type_parameters': None,
+  'parameters': None,
+  'data_type': None,
+  'body': 11},
+ {'operation': 'block_start', 'stmt_id': 11, 'parent_stmt_id': 10},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 12,
+  'target': '%v0',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 13,
+  'attr': None,
+  'target': '%v1',
+  'name': '%v0',
+  'type_parameters': None,
+  'args': '[\'"Start"\']'},
+ {'operation': 'goto_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 14,
+  'target': 'Skip'},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 15,
+  'target': '%v2',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 16,
+  'attr': None,
+  'target': '%v3',
+  'name': '%v2',
+  'type_parameters': None,
+  'args': '[\'"This will not be printed"\']'},
+ {'operation': 'label_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 17,
+  'name': 'Skip'},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 18,
+  'target': '%v4',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 19,
+  'attr': None,
+  'target': '%v5',
+  'name': '%v4',
+  'type_parameters': None,
+  'args': '[\'"Skipped to here"\']'},
+ {'operation': 'for_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 20,
+  'init_body': 21,
+  'condition': '%v0',
+  'condition_prebody': 24,
+  'update_body': 26,
+  'body': 28},
+ {'operation': 'block_start', 'stmt_id': 21, 'parent_stmt_id': 20},
+ {'operation': 'variable_decl',
+  'parent_stmt_id': 21,
+  'stmt_id': 22,
+  'attr': 'short_var',
+  'data_type': '',
+  'name': 'i'},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 21,
+  'stmt_id': 23,
+  'target': 'i',
+  'operand': '0'},
+ {'operation': 'block_end', 'stmt_id': 21, 'parent_stmt_id': 20},
+ {'operation': 'block_start', 'stmt_id': 24, 'parent_stmt_id': 20},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 24,
+  'stmt_id': 25,
+  'target': '%v0',
+  'operator': '<',
+  'operand': 'i',
+  'operand2': '5'},
+ {'operation': 'block_end', 'stmt_id': 24, 'parent_stmt_id': 20},
+ {'operation': 'block_start', 'stmt_id': 26, 'parent_stmt_id': 20},
+ {'operation': 'inc_stmt', 'parent_stmt_id': 26, 'stmt_id': 27, 'target': 'i'},
+ {'operation': 'block_end', 'stmt_id': 26, 'parent_stmt_id': 20},
+ {'operation': 'block_start', 'stmt_id': 28, 'parent_stmt_id': 20},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 28,
+  'stmt_id': 29,
+  'target': '%v0',
+  'operator': '==',
+  'operand': 'i',
+  'operand2': '2'},
+ {'operation': 'if_stmt',
+  'parent_stmt_id': 28,
+  'stmt_id': 30,
+  'condition': '%v0',
+  'then_body': 31},
+ {'operation': 'block_start', 'stmt_id': 31, 'parent_stmt_id': 30},
+ {'operation': 'goto_stmt',
+  'parent_stmt_id': 31,
+  'stmt_id': 32,
+  'target': 'Found'},
+ {'operation': 'block_end', 'stmt_id': 31, 'parent_stmt_id': 30},
+ {'operation': 'block_end', 'stmt_id': 28, 'parent_stmt_id': 20},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 33,
+  'target': '%v6',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 34,
+  'attr': None,
+  'target': '%v7',
+  'name': '%v6',
+  'type_parameters': None,
+  'args': '[\'"Not found"\']'},
+ {'operation': 'label_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 35,
+  'name': 'Found'},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 36,
+  'target': '%v8',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 37,
+  'attr': None,
+  'target': '%v9',
+  'name': '%v8',
+  'type_parameters': None,
+  'args': '[\'"Found at 2"\']'},
+ {'operation': 'if_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 38,
+  'condition': 'true',
+  'then_body': 39,
+  'else_body': 41},
+ {'operation': 'block_start', 'stmt_id': 39, 'parent_stmt_id': 38},
+ {'operation': 'goto_stmt',
+  'parent_stmt_id': 39,
+  'stmt_id': 40,
+  'target': 'InsideIf'},
+ {'operation': 'block_end', 'stmt_id': 39, 'parent_stmt_id': 38},
+ {'operation': 'block_start', 'stmt_id': 41, 'parent_stmt_id': 38},
+ {'operation': 'field_read',
+  'parent_stmt_id': 41,
+  'stmt_id': 42,
+  'target': '%v0',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 41,
+  'stmt_id': 43,
+  'attr': None,
+  'target': '%v1',
+  'name': '%v0',
+  'type_parameters': None,
+  'args': '[\'"In the else block"\']'},
+ {'operation': 'block_end', 'stmt_id': 41, 'parent_stmt_id': 38},
+ {'operation': 'label_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 44,
+  'name': 'InsideIf'},
+ {'operation': 'field_read',
+  'parent_stmt_id': 11,
+  'stmt_id': 45,
+  'target': '%v10',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 11,
+  'stmt_id': 46,
+  'attr': None,
+  'target': '%v11',
+  'name': '%v10',
+  'type_parameters': None,
+  'args': '[\'"Inside if block"\']'},
+ {'operation': 'block_end', 'stmt_id': 11, 'parent_stmt_id': 10}]
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:12->13, weight=None
+[DEBUG]: _add_one_edge:13->14, weight=None
+[DEBUG]: _add_one_edge:15->16, weight=None
+[DEBUG]: _add_one_edge:16->17, weight=None
+[DEBUG]: _add_one_edge:14->17, weight=None
+[DEBUG]: _add_one_edge:17->18, weight=None
+[DEBUG]: _add_one_edge:18->19, weight=None
+[DEBUG]: _add_one_edge:19->22, weight=None
+[DEBUG]: _add_one_edge:22->23, weight=None
+[DEBUG]: _add_one_edge:23->25, weight=None
+[DEBUG]: _add_one_edge:25->20, weight=3
+[DEBUG]: _add_one_edge:20->29, weight=4
+[DEBUG]: _add_one_edge:29->30, weight=None
+[DEBUG]: _add_one_edge:30->32, weight=1
+[DEBUG]: _add_one_edge:30->27, weight=2
+[DEBUG]: _add_one_edge:27->25, weight=None
+[DEBUG]: _add_one_edge:20->33, weight=5
+[DEBUG]: _add_one_edge:33->34, weight=None
+[DEBUG]: _add_one_edge:34->35, weight=None
+[DEBUG]: _add_one_edge:32->35, weight=None
+[DEBUG]: _add_one_edge:35->36, weight=None
+[DEBUG]: _add_one_edge:36->37, weight=None
+[DEBUG]: _add_one_edge:37->38, weight=None
+[DEBUG]: _add_one_edge:38->40, weight=1
+[DEBUG]: _add_one_edge:38->42, weight=2
+[DEBUG]: _add_one_edge:42->43, weight=None
+[DEBUG]: _add_one_edge:43->44, weight=None
+[DEBUG]: _add_one_edge:40->44, weight=None
+[DEBUG]: _add_one_edge:44->45, weight=None
+[DEBUG]: _add_one_edge:45->46, weight=None
+[DEBUG]: _add_one_edge:46->-1, weight=None
+=== target file ===
+/app/experiment_3/tests/resource/control_flow/go/goto.go
++ reference answer
+[(12, 13, 0),
+ (13, 14, 0),
+ (14, 17, 0),
+ (15, 16, 0),
+ (16, 17, 0),
+ (17, 18, 0),
+ (18, 19, 0),
+ (19, 22, 0),
+ (20, 29, 4),
+ (20, 33, 5),
+ (22, 23, 0),
+ (23, 25, 0),
+ (25, 20, 3),
+ (27, 25, 0),
+ (29, 30, 0),
+ (30, 27, 2),
+ (30, 32, 1),
+ (32, 35, 0),
+ (33, 34, 0),
+ (34, 35, 0),
+ (35, 36, 0),
+ (36, 37, 0),
+ (37, 38, 0),
+ (38, 40, 1),
+ (38, 42, 2),
+ (40, 44, 0),
+ (42, 43, 0),
+ (43, 44, 0),
+ (44, 45, 0),
+ (45, 46, 0),
+ (46, -1, 0)]
++ current result
+[(12, 13, 0),
+ (13, 14, 0),
+ (14, 17, 0),
+ (15, 16, 0),
+ (16, 17, 0),
+ (17, 18, 0),
+ (18, 19, 0),
+ (19, 22, 0),
+ (20, 29, 4),
+ (20, 33, 5),
+ (22, 23, 0),
+ (23, 25, 0),
+ (25, 20, 3),
+ (27, 25, 0),
+ (29, 30, 0),
+ (30, 27, 2),
+ (30, 32, 1),
+ (32, 35, 0),
+ (33, 34, 0),
+ (34, 35, 0),
+ (35, 36, 0),
+ (36, 37, 0),
+ (37, 38, 0),
+ (38, 40, 1),
+ (38, 42, 2),
+ (40, 44, 0),
+ (42, 43, 0),
+ (43, 44, 0),
+ (44, 45, 0),
+ (45, 46, 0),
+ (46, -1, 0)]
+  （3）
+  [DEBUG]: Lang-Parser: /app/experiment_3/tests/lian_workspace/src/method_decl.go
+[{'type_decl': {'attr': 'type',
+                'name': 'Calculator',
+                'type_parameters': '',
+                'type': ['struct_type']}},
+ {'method_decl': {'attr': [[{'parameter_decl': {'name': 'c',
+                                                'data_type': 'Calculator'}}]],
+                  'name': 'Clear',
+                  'parameters': [],
+                  'data_type': [],
+                  'body': [{'field_read': {'target': '%v0',
+                                           'receiver_object': 'fmt',
+                                           'field': 'Println'}},
+                           {'call_stmt': {'attr': [],
+                                          'target': '%v1',
+                                          'name': '%v0',
+                                          'type_parameters': [],
+                                          'args': ['"Calculator cleared"']}}]}},
+ {'type_decl': {'attr': 'type',
+                'name': 'Rectangle',
+                'type_parameters': '',
+                'type': ['struct_type',
+                         {'name': 'height', 'type': 'float64', 'tag': []}]}},
+ {'method_decl': {'attr': [[{'parameter_decl': {'name': 'r',
+                                                'data_type': 'Rectangle'}}]],
+                  'name': 'Area',
+                  'parameters': [],
+                  'data_type': 'float64',
+                  'body': [{'field_read': {'target': '%v0',
+                                           'receiver_object': 'r',
+                                           'field': 'width'}},
+                           {'field_read': {'target': '%v1',
+                                           'receiver_object': 'r',
+                                           'field': 'height'}},
+                           {'assign_stmt': {'target': '%v2',
+                                            'operator': '*',
+                                            'operand': '%v0',
+                                            'operand2': '%v1'}},
+                           {'return': {'target': '%v2'}}]}}]
+[{'operation': 'type_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 10,
+  'attr': 'type',
+  'name': 'Calculator',
+  'type_parameters': '',
+  'type': "['struct_type']"},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 11,
+  'attr': "[[{'parameter_decl': {'name': 'c', 'data_type': 'Calculator'}}]]",
+  'name': 'Clear',
+  'parameters': None,
+  'data_type': None,
+  'body': 12},
+ {'operation': 'block_start', 'stmt_id': 12, 'parent_stmt_id': 11},
+ {'operation': 'field_read',
+  'parent_stmt_id': 12,
+  'stmt_id': 13,
+  'target': '%v0',
+  'receiver_object': 'fmt',
+  'field': 'Println'},
+ {'operation': 'call_stmt',
+  'parent_stmt_id': 12,
+  'stmt_id': 14,
+  'attr': None,
+  'target': '%v1',
+  'name': '%v0',
+  'type_parameters': None,
+  'args': '[\'"Calculator cleared"\']'},
+ {'operation': 'block_end', 'stmt_id': 12, 'parent_stmt_id': 11},
+ {'operation': 'type_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 15,
+  'attr': 'type',
+  'name': 'Rectangle',
+  'type_parameters': '',
+  'type': "['struct_type', {'name': 'height', 'type': 'float64', 'tag': []}]"},
+ {'operation': 'method_decl',
+  'parent_stmt_id': 0,
+  'stmt_id': 16,
+  'attr': "[[{'parameter_decl': {'name': 'r', 'data_type': 'Rectangle'}}]]",
+  'name': 'Area',
+  'parameters': None,
+  'data_type': 'float64',
+  'body': 17},
+ {'operation': 'block_start', 'stmt_id': 17, 'parent_stmt_id': 16},
+ {'operation': 'field_read',
+  'parent_stmt_id': 17,
+  'stmt_id': 18,
+  'target': '%v0',
+  'receiver_object': 'r',
+  'field': 'width'},
+ {'operation': 'field_read',
+  'parent_stmt_id': 17,
+  'stmt_id': 19,
+  'target': '%v1',
+  'receiver_object': 'r',
+  'field': 'height'},
+ {'operation': 'assign_stmt',
+  'parent_stmt_id': 17,
+  'stmt_id': 20,
+  'target': '%v2',
+  'operator': '*',
+  'operand': '%v0',
+  'operand2': '%v1'},
+ {'operation': 'return', 'parent_stmt_id': 17, 'stmt_id': 21, 'target': '%v2'},
+ {'operation': 'block_end', 'stmt_id': 17, 'parent_stmt_id': 16}]
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:13->14, weight=None
+[DEBUG]: _add_one_edge:14->-1, weight=None
+[DEBUG]: analysis_phase name: control_flow index:0
+[DEBUG]: _add_one_edge:18->19, weight=None
+[DEBUG]: _add_one_edge:19->20, weight=None
+[DEBUG]: _add_one_edge:20->21, weight=None
+[DEBUG]: _add_one_edge:21->-1, weight=None
+=== target file ===
+/app/experiment_3/tests/resource/control_flow/go/method_decl.go
++ reference answer
+[(13, 14, 0), (14, -1, 0), (18, 19, 0), (19, 20, 0), (20, 21, 0), (21, -1, 0)]
++ current result
+[(13, 14, 0), (14, -1, 0), (18, 19, 0), (19, 20, 0), (20, 21, 0), (21, -1, 0)]
