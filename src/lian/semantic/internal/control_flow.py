@@ -34,7 +34,7 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         self.stmt_handlers = {
             "if_stmt"       : self.analyze_if_stmt,
             "for_stmt"      : self.analyze_for_stmt,
-            "forin_stmt"    : self.analyze_while_stmt,
+            "forin_stmt"    : self.analyze_forin_stmt,
             "break_stmt"    : self.analyze_break_stmt,
             "continue_stmt" : self.analyze_continue_stmt,
             "return_stmt"   : self.analyze_return_stmt,
@@ -115,6 +115,76 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         self.replace_multiple_edges_with_single()
         self.save_current_cfg()
         return self.cfg.graph
+
+    def analyze_forin_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        #abstract break/continue in global_special_stmts first to avoid outer break interacts with current loop
+        global_special_stmts_without_outer_bc=global_special_stmts.copy()
+        labelBind=None
+        for stmt in global_special_stmts:
+            # print(stmt,"int gs:")
+            if isinstance(stmt,specialBind):
+                # print(stmt.next_stmt,current_stmt)
+                if(stmt.label_for(current_stmt)):
+                    labelBind=stmt
+                continue
+            if stmt.operation=="break_stmt" or stmt.operation=="continue_stmt":
+                global_special_stmts_without_outer_bc.remove(stmt)
+        # print(str(labelBind),'''**********''')
+        previous=[]
+        #parent to init
+        last_stmts_of_init_body = parent_stmts
+        init_body_id = current_stmt.array_read
+        if not util.isna(init_body_id):
+            init_body = self.read_block(current_block, init_body_id)
+            if len(init_body) != 0:
+                last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts_without_outer_bc)
+        
+        #init to forin
+        self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_init_body, current_stmt,ControlFlowKind.FOR_CONDITION)
+        
+        #for to body or outof loop
+        last_stmts_of_body = [CFGNode(current_stmt, ControlFlowKind.LOOP_TRUE)]
+        previous.append(CFGNode(current_stmt, ControlFlowKind.LOOP_FALSE))
+        body_id = current_stmt.body
+        first_stmt_of_body=None
+        if not util.isna(body_id):
+            body = self.read_block(current_block, body_id)
+            if len(body) != 0:
+                last_stmts_of_body = self.analyze_block(body, last_stmts_of_body, global_special_stmts_without_outer_bc)
+                first_stmt_of_body =body.access(0)
+
+        #body to forin
+        self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_body,current_stmt,ControlFlowKind.FOR_CONDITION)
+
+        for stmt in global_special_stmts_without_outer_bc.copy():
+            if isinstance(stmt,specialBind):
+                continue
+            if stmt.operation=="break_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched break;
+                    previous.append(CFGNode(stmt,ControlFlowKind.BREAK))
+                    global_special_stmts_without_outer_bc.remove(stmt)
+
+                continue
+            if stmt.operation=="continue_stmt":
+                label=stmt.target
+                if len(label)==0 or (labelBind is not None and labelBind.match(label)):
+                    #matched continue;
+                    t=[CFGNode(stmt,ControlFlowKind.CONTINUE)]
+                    self.link_parent_stmts_to_current_stmt(t,current_stmt)
+                        
+                    global_special_stmts_without_outer_bc.remove(stmt)
+                continue
+        for stmt in global_special_stmts_without_outer_bc:
+            if stmt not in global_special_stmts:
+                global_special_stmts.append(stmt)
+        #return 
+        boundary = self.boundary_of_multi_blocks(current_block, [init_body_id,body_id])
+        # print(init_body_id, condition_prebody_id, body_id, update_body_id)
+        if util.isna(init_body_id) and util.isna(body_id):
+            boundary=current_stmt._index
+        return (previous,boundary)
 
     def analyze_while_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         return ([], -1)
