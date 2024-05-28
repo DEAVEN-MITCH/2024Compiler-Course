@@ -39,8 +39,8 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
             "continue_stmt" : self.analyze_continue_stmt,
             "return_stmt"   : self.analyze_return_stmt,
             "method_decl"   : self.analyze_method_decl_stmt,
-            # "goto_stmt":self.analyze_goto_stmt,
-            "label_stmt":self.analyze_label_stmt,
+            "goto_stmt"     : self.analyze_goto_stmt,
+            "label_stmt"    : self.analyze_label_stmt,  
         }
 
 
@@ -193,7 +193,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         return ([], -1)
 
     def analyze_for_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
-        
         #abstract break/continue in global_special_stmts first to avoid outer break interacts with current loop
         global_special_stmts_without_outer_bc=global_special_stmts.copy()
         labelBind=None
@@ -208,7 +207,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
                 global_special_stmts_without_outer_bc.remove(stmt)
         # print(str(labelBind),'''**********''')
         previous=[]
-
         #parent to init
         last_stmts_of_init_body = parent_stmts
         init_body_id = current_stmt.init_body
@@ -216,8 +214,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
             init_body = self.read_block(current_block, init_body_id)
             if len(init_body) != 0:
                 last_stmts_of_init_body = self.analyze_block(init_body,parent_stmts, global_special_stmts_without_outer_bc)
-        
-
         #init to condition
         last_stmts_of_condition_prebody=last_stmts_of_init_body
         condition_prebody_id = current_stmt.condition_prebody
@@ -227,12 +223,8 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
             if len(condition_prebody) != 0:
                 last_stmts_of_condition_prebody = self.analyze_block(condition_prebody, last_stmts_of_condition_prebody, global_special_stmts_without_outer_bc)
                 first_stmt_of_condition = condition_prebody.access(0)
-
-            
         #condition to for
-
         self.link_parent_stmts_to_current_stmt_with_type(last_stmts_of_condition_prebody, current_stmt,ControlFlowKind.FOR_CONDITION)
-
         #for to body or outof loop
         last_stmts_of_body = [CFGNode(current_stmt, ControlFlowKind.LOOP_TRUE)]
         previous.append(CFGNode(current_stmt, ControlFlowKind.LOOP_FALSE))
@@ -252,7 +244,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
             if len(update_body) != 0:
                 last_stmts_of_update_body = self.analyze_block(update_body, last_stmts_of_update_body, global_special_stmts_without_outer_bc)
                 first_stmt_of_update_body = update_body.access(0)
-
         #update to condition
         logstr=''
         for stmt in last_stmts_of_update_body:
@@ -264,7 +255,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         if  first_stmt_of_condition is not None:
             #link to condition
              self.link_parent_stmts_to_current_stmt(last_stmts_of_update_body,first_stmt_of_condition)
-            
         else:
              #link to for when condition empty
             # print(logstr,'with type add edge!')
@@ -280,7 +270,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
                     #matched break;
                     previous.append(CFGNode(stmt,ControlFlowKind.BREAK))
                     global_special_stmts_without_outer_bc.remove(stmt)
-
                 continue
             if stmt.operation=="continue_stmt":
                 label=stmt.target
@@ -293,7 +282,6 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
                         self.link_parent_stmts_to_current_stmt(t,first_stmt_of_condition)
                     else:
                         self.link_parent_stmts_to_current_stmt(t,current_stmt)
-                        
                     global_special_stmts_without_outer_bc.remove(stmt)
                 continue
         for stmt in global_special_stmts_without_outer_bc:
@@ -304,33 +292,83 @@ class ControlFlowAnalysis(InternalAnalysisTemplate):
         # print(init_body_id, condition_prebody_id, body_id, update_body_id)
         if util.isna(init_body_id) and util.isna(body_id) and util.isna(update_body_id) and util.isna(condition_prebody_id):
             boundary=current_stmt._index
-        # print('in for',current_stmt.stmt_id,'.previous:')
-        # for stmt in previous:
-        #     if isinstance(stmt,CFGNode):
-        #         print(stmt.stmt.operation,stmt.stmt.stmt_id,stmt.edge)
-        #     else:
-
-        #         print(stmt.operation,stmt.stmt_id)
-        # print('special_stmts:')
-        # for child in global_special_stmts:
-        #     if isinstance(child,specialBind):
-        #         print(str(child))
-        #     else:
-        #         print(child.operation,child.stmt_id)
-        # print('boundary',boundary)
         return (previous,boundary)
-
+    
     def analyze_try_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         return ([], -1)
+    
+    def analyze_goto_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        # 连接当前 goto 语句与其父语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
 
+        # 检查 global_special_stmts 中是否已经存在与 goto 目标相匹配的标签
+        target_label = current_stmt.target  # 假设 current_stmt.target 存储了 goto 语句的目标标签名称
+        label_found = False
+        for stmt in global_special_stmts:
+            if isinstance(stmt, specialBind) and stmt.match(target_label):
+                # 如果找到匹配的标签，添加边从 goto 到标签
+                self.cfg.add_edge(current_stmt, stmt.stmt, ControlFlowKind.GOTO)
+                label_found = True
+                break
+
+        if not label_found:
+            # 如果没有找到标签，将 goto 语句添加到 global_special_stmts 中等待未来处理
+            global_special_stmts.append(current_stmt)
+
+        # goto 语句执行后，控制流将跳转到标签，因此后续语句不会执行
+        # 返回空列表和当前语句的索引，表明代码块分析应在此处终止
+        return ([], current_stmt._index)
+
+    
     def analyze_method_decl_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
-        return ([], -1)
+        # 链接父语句到当前方法声明语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        # 添加当前方法声明到特殊全局语句列表，用于处理内部跳转
+        global_special_stmts.append(current_stmt)
+        # 方法体的开始点
+        method_body_id = current_stmt.body
+        method_body = self.read_block(current_block, method_body_id) if not util.isna(method_body_id) else []
+        # 初始化方法体内最后的语句列表
+        last_stmts_of_method_body = [CFGNode(current_stmt, ControlFlowKind.METHOD_ENTRY)]
+        # 分析方法体内的所有语句
+        if method_body:
+            last_stmts_of_method_body = self.analyze_block(method_body, last_stmts_of_method_body, global_special_stmts)
+        # 处理方法结束后的跳转和标签
+        if last_stmts_of_method_body:
+            for stmt in last_stmts_of_method_body:
+                if isinstance(stmt, CFGNode) and stmt.stmt.operation == "return_stmt":
+                    self.cfg.add_edge(stmt.stmt, current_stmt, ControlFlowKind.NORMAL_EXIT)
+                elif isinstance(stmt, CFGNode) and stmt.stmt.operation == "goto_stmt":
+                    if stmt.stmt.target == current_stmt.name:  # 如果goto指向方法的开头
+                        self.cfg.add_edge(stmt.stmt, current_stmt, stmt.edge)
+        # 方法结束节点，这里认为是方法体之后的第一个语句
+        next_index = current_stmt._index + 1
+        next_stmt = current_block.access(next_index) if next_index < len(current_block) else None
+        newBind = specialBind(current_stmt, next_stmt)
+        global_special_stmts.append(newBind)
+        # 返回方法体最后的语句和新的索引，以及连接新的绑定
+        return (last_stmts_of_method_body, next_index - 1)
+
 
     def analyze_decl_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         return ([], -1)
 
     def analyze_return_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
+        # 链接父节点到当前的 return 语句
+        self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
+        # 处理 return 语句可能携带的返回值
+        return_value = current_stmt.get_return_value()  # 假设 get_return_value 方法能获取 return 语句的返回值信息
+        if return_value is not None:
+            # 分析返回值表达式
+            self.analyze_expression(return_value, current_stmt, global_special_stmts)
+        # 在 CFG 中添加一个特殊的结束边，将当前 return 语句链接到方法的逻辑结束节点 
+        exit_node = CFGNode(-1, ControlFlowKind.NORMAL_EXIT)  # 假设 -1 是方法结束的标准标记
+        self.cfg.add_edge(current_stmt, exit_node, ControlFlowKind.NORMAL_EXIT)
+        # 将 return 语句添加到 global_special_stmts 以支持外部分析
+        global_special_stmts.append(current_stmt)
+        # Return 语句执行后不应再有其他执行语句，返回一个空列表和结束标记
         return ([], -1)
+
 
     def analyze_break_stmt(self, current_block, current_stmt, parent_stmts, global_special_stmts):
         self.link_parent_stmts_to_current_stmt(parent_stmts, current_stmt)
